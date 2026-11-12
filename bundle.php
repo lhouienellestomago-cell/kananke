@@ -17,11 +17,11 @@ if (!is_dir($uploadDir)) {
 }
 
 $products = [
-    "pancit" => [
-        "name" => "Special Pancit",
-        "description" => "Special pancit, perfect for sharing.",
-        "price" => 750,
-        "image" => "images/pancit.jpg"
+    "Bundle" => [
+        "name" => "Barkada Bundle",
+        "description" => "perfect for sharing with barkada.",
+        "price" => 5000,
+        "image" => "images/barkada_bundle.jpg"
     ],
     "bundle" => [
         "name" => "Family Bundle",
