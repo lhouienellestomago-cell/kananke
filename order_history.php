@@ -483,10 +483,20 @@ tr:hover {
                         <td>
 
                             <?php
-                            echo date(
-                                "M d, Y h:i A",
-                                strtotime(
-                                    $row["order_date"]
+                           
+$orderDate = new DateTime(
+    $row["order_date"],
+    new DateTimeZone("UTC")
+);
+
+$orderDate->setTimezone(
+    new DateTimeZone("Asia/Manila")
+);
+
+echo htmlspecialchars(
+    $orderDate->format("M d, Y h:i A")
+);
+
                                 )
                             );
                             ?>
