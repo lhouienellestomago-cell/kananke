@@ -1,0 +1,31 @@
+http://localhost/kananke/login_page.php
+http://localhost/kananke/
+
+
+to create:
+http://localhost/kananke/create_user.php
+
+(for table)
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL
+
+(FOR ORDER RECORD(XAMMPTABLE)
+CREATE TABLE orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    
+    product_name VARCHAR(150) NOT NULL,
+    price DECIMAL(10,2) NOT NULL,
+    quantity INT NOT NULL,
+    customer_name VARCHAR(150) NOT NULL,
+    phone VARCHAR(30) NOT NULL,
+    address VARCHAR(255) NOT NULL,
+    total DECIMAL(10,2) NOT NULL,
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+   (ADD IF ERROR)
+    ALTER TABLE orders
+ADD COLUMN user_id INT NOT NULL AFTER id;
+);
+);
