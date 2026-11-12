@@ -31,12 +31,13 @@ try {
 
     $conn->set_charset("utf8mb4");
 
+    // Use UTC consistently for database timestamps.
+    $conn->query("SET time_zone = '+00:00'");
+
 } catch (mysqli_sql_exception $e) {
     error_log("Database connection failed: " . $e->getMessage());
     http_response_code(500);
     exit("Database connection failed.");
 }
 
-// IMPORTANT: Do not add a closing PHP tag.
-        
-        
+// Do not add a closing PHP tag.
