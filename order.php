@@ -27,10 +27,10 @@ $products = [
         "price" => 800,
         "image" => "chickencordon.png"
     ],
-    "pancit" => [
-        "name" => "Special Pancit",
-        "price" => 750,
-        "image" => "images/pancit.jpg"
+    "Bundle" => [
+        "name" => "Barkada Bundle",
+        "price" => 5000,
+        "image" => "images/barkada_bundle.jpg"
     ],
     "bundle" => [
         "name" => "Family Bundle",
