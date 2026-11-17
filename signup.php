@@ -207,7 +207,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f58220;
+    background: #f3f5f9;
     font-family: Arial, sans-serif;
     color: #222;
 }
@@ -249,7 +249,7 @@ input {
 
 input:focus {
     outline: none;
-    border-color: #198754;
+    border-color: #f58220;
 }
 
 .file-input {
@@ -264,7 +264,7 @@ input:focus {
     object-fit: cover;
     border-radius: 50%;
     margin: 15px auto;
-    border: 3px solid #198754;
+    border: 3px solid #f58220;
 }
 
 .hint {
@@ -280,7 +280,7 @@ button {
     padding: 13px;
     border: none;
     border-radius: 8px;
-    background: #198754;
+    background: #f58220;
     color: white;
     font-size: 16px;
     font-weight: bold;
@@ -288,7 +288,7 @@ button {
 }
 
 button:hover {
-    background: #146c43;
+    background: #f58220;
 }
 
 .error {
@@ -307,7 +307,7 @@ button:hover {
 }
 
 .login-link a {
-    color: #198754;
+    color: #f58220;
     text-decoration: none;
     font-weight: bold;
 }
