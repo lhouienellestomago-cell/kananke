@@ -1,10 +1,37 @@
 <?php
+date_default_timezone_set("Asia/Manila");
 session_start();
 
 if (!isset($_SESSION["loggedIn"]) || $_SESSION["loggedIn"] !== true) {
     header("Location: login_page.php");
     exit;
 }
+
+require_once "db.php";
+
+$user_id = (int)($_SESSION["user_id"] ?? 0);
+$unread_replies = 0;
+
+if ($user_id > 0) {
+    $stmt = $conn->prepare(
+        "SELECT COUNT(*) AS unread_count
+         FROM support_replies r
+         INNER JOIN support_messages s ON s.id = r.support_id
+         WHERE s.user_id = ?
+           AND r.sender_role = 'admin'
+           AND r.read_at IS NULL"
+    );
+
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+
+    $result = $stmt->get_result()->fetch_assoc();
+    $unread_replies = (int)($result["unread_count"] ?? 0);
+
+    $stmt->close();
+}
+
+$conn->close();
 ?>
 
 <!DOCTYPE html>
@@ -72,10 +99,27 @@ nav a:hover {
     color: white !important;
     padding: 9px 13px;
     border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .support-link:hover {
     background: #ea580c;
+}
+
+.notification-count {
+    background: #dc2626;
+    color: white;
+    min-width: 21px;
+    height: 21px;
+    padding: 0 6px;
+    border-radius: 50px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 800;
 }
 
 .logout {
@@ -274,7 +318,17 @@ footer {
         <a href="#products">Products</a>
         <a href="#about">About</a>
         <a href="order_history.php">Order History</a>
-        <a href="contact_support.php" class="support-link">Contact Support</a>
+
+        <a href="contact_support.php" class="support-link">
+            Contact Support
+
+            <?php if ($unread_replies > 0): ?>
+                <span class="notification-count">
+                    <?php echo $unread_replies > 99 ? "99+" : $unread_replies; ?>
+                </span>
+            <?php endif; ?>
+        </a>
+
         <a href="logout.php" class="logout">Log Out</a>
     </nav>
 </header>
