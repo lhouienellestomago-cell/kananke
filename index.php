@@ -100,32 +100,62 @@ nav a:hover {
     color: #f97316;
 }
 
+/* =====================================
+   CIRCULAR CONTACT SUPPORT BUTTON
+===================================== */
+
 .support-link {
     background: #f97316;
     color: white !important;
-    padding: 10px 14px;
-    border-radius: 9px;
+
+    width: 50px;
+    height: 50px;
+
+    padding: 0;
+    border-radius: 50%;
+
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    justify-content: center;
+
+    position: relative;
+    flex-shrink: 0;
+
+    font-size: 19px;
+    text-decoration: none;
+
+    transition: background 0.2s, transform 0.2s;
 }
 
 .support-link:hover {
     background: #ea580c;
+    transform: scale(1.05);
 }
 
+/* RED NOTIFICATION NUMBER */
+
 .notification-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+
+    min-width: 20px;
+    height: 20px;
+
+    padding: 0 5px;
+    border-radius: 50px;
+
+    background: #dc2626;
+    color: white;
+
+    font-size: 11px;
+    font-weight: bold;
+
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
-    border-radius: 50px;
-    background: #dc2626;
-    color: white;
-    font-size: 11px;
-    font-weight: bold;
+
+    border: 2px solid white;
     line-height: 1;
 }
 
@@ -279,6 +309,8 @@ footer {
     color: #667085;
 }
 
+/* TABLET */
+
 @media(max-width:900px) {
     header {
         flex-wrap: wrap;
@@ -297,6 +329,8 @@ footer {
     }
 }
 
+/* MOBILE */
+
 @media(max-width:600px) {
     header {
         padding: 15px 4%;
@@ -310,14 +344,24 @@ footer {
     nav {
         width: 100%;
         gap: 10px;
+        align-items: center;
     }
 
     nav a {
         font-size: 13px;
     }
 
+    /* Smaller circular support button on mobile */
     .support-link {
-        padding: 9px 10px;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        font-size: 17px;
+    }
+
+    .notification-badge {
+        top: -6px;
+        right: -6px;
     }
 
     main {
@@ -361,7 +405,8 @@ footer {
 
         <a href="order_history.php">Order History</a>
 
-        <a href="contact_support.php" class="support-link">
+        <a href="contact_support.php" class="support-link" title="Contact Support" aria-label="Contact Support">
+
             💬
 
             <?php if ($unreadCount > 0): ?>
@@ -369,6 +414,7 @@ footer {
                     <?php echo $unreadCount > 99 ? "99+" : $unreadCount; ?>
                 </span>
             <?php endif; ?>
+
         </a>
 
         <a href="logout.php" class="logout">Log Out</a>
