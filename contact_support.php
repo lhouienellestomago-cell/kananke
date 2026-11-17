@@ -1,6 +1,9 @@
-
 <?php
 session_start();
+
+// =====================================
+// CUSTOMER LOGIN CHECK
+// =====================================
 
 if (
     !isset($_SESSION["loggedIn"]) ||
@@ -10,464 +13,698 @@ if (
     exit;
 }
 
+// =====================================
+// DATABASE CONNECTION
+// =====================================
+
 require_once "db.php";
+
+if (!isset($_SESSION["user_id"])) {
+    die("User session not found. Please log in again.");
+}
 
 $user_id = (int) $_SESSION["user_id"];
 
-if (empty($_SESSION["support_csrf"])) {
-    $_SESSION["support_csrf"] = bin2hex(random_bytes(32));
+// =====================================
+// CSRF TOKEN
+// =====================================
+
+if (empty($_SESSION["csrf_token"])) {
+    $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
 }
 
-$message = "";
-$message_type = "";
+// =====================================
+// HANDLE CUSTOMER MESSAGE
+// =====================================
 
-if (isset($_SESSION["support_notice"])) {
-    $message = $_SESSION["support_notice"];
-    $message_type = $_SESSION["support_notice_type"];
-
-    unset(
-        $_SESSION["support_notice"],
-        $_SESSION["support_notice_type"]
-    );
-}
-
-// Send customer message.
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["send_message"])) {
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     $token = $_POST["csrf_token"] ?? "";
 
-    if (!hash_equals($_SESSION["support_csrf"], $token)) {
-        $_SESSION["support_notice"] = "Invalid request. Please try again.";
-        $_SESSION["support_notice_type"] = "error";
+    if (
+        !is_string($token) ||
+        !hash_equals($_SESSION["csrf_token"], $token)
+    ) {
+        $_SESSION["support_message"] = "Invalid request. Please try again.";
+        $_SESSION["support_message_type"] = "error";
+
         header("Location: contact_support.php");
         exit;
     }
 
-    $order_id = !empty($_POST["order_id"])
-        ? filter_var($_POST["order_id"], FILTER_VALIDATE_INT)
-        : null;
-
     $customer_message = trim($_POST["message"] ?? "");
+    $order_id_input = trim($_POST["order_id"] ?? "");
 
-    if (strlen($customer_message) < 3 || strlen($customer_message) > 5000) {
+    if ($customer_message === "") {
 
-        $_SESSION["support_notice"] =
-            "Your message must contain between 3 and 5000 characters.";
+        $_SESSION["support_message"] = "Please enter your message.";
+        $_SESSION["support_message_type"] = "error";
 
-        $_SESSION["support_notice_type"] = "error";
+    } elseif (strlen($customer_message) > 5000) {
+
+        $_SESSION["support_message"] = "Your message is too long. Maximum is 5000 characters.";
+        $_SESSION["support_message_type"] = "error";
 
     } else {
 
-        // Verify that the selected order belongs to the customer.
-        if ($order_id !== null && $order_id !== false) {
+        // =================================
+        // VALIDATE OPTIONAL ORDER
+        // =================================
 
-            $check = $conn->prepare(
-                "SELECT id FROM orders WHERE id = ? AND user_id = ?"
+        $order_id = null;
+        $valid_order = true;
+
+        if ($order_id_input !== "") {
+
+            $order_id = filter_var(
+                $order_id_input,
+                FILTER_VALIDATE_INT
             );
 
-            $check->bind_param("ii", $order_id, $user_id);
-            $check->execute();
+            if (!$order_id || $order_id < 1) {
+                $valid_order = false;
+            } else {
 
-            $order_result = $check->get_result();
+                // Make sure the selected order belongs to this customer.
+                $check_sql = "SELECT id
+                              FROM orders
+                              WHERE id = ?
+                              AND user_id = ?";
 
-            if ($order_result->num_rows === 0) {
-                $_SESSION["support_notice"] = "Invalid order selected.";
-                $_SESSION["support_notice_type"] = "error";
-                $check->close();
+                $check_stmt = $conn->prepare($check_sql);
 
-                header("Location: contact_support.php");
-                exit;
+                $check_stmt->bind_param(
+                    "ii",
+                    $order_id,
+                    $user_id
+                );
+
+                $check_stmt->execute();
+
+                $check_result = $check_stmt->get_result();
+
+                if ($check_result->num_rows === 0) {
+                    $valid_order = false;
+                }
+
+                $check_stmt->close();
             }
-
-            $check->close();
-
-        } else {
-            $order_id = null;
         }
 
-        $insert = $conn->prepare(
-            "INSERT INTO support_messages
-             (user_id, order_id, message, status)
-             VALUES (?, ?, ?, 'Open')"
-        );
+        if (!$valid_order) {
 
-        $insert->bind_param(
-            "iis",
-            $user_id,
-            $order_id,
-            $customer_message
-        );
+            $_SESSION["support_message"] = "Invalid order selected.";
+            $_SESSION["support_message_type"] = "error";
 
-        $insert->execute();
-        $insert->close();
+        } else {
 
-        $_SESSION["support_notice"] =
-            "Your message has been sent successfully!";
+            // =================================
+            // SAVE SUPPORT MESSAGE
+            // =================================
 
-        $_SESSION["support_notice_type"] = "success";
+            if ($order_id === null) {
+
+                $insert_sql = "INSERT INTO support_messages
+                               (user_id, order_id, message, status)
+                               VALUES (?, NULL, ?, 'Open')";
+
+                $insert_stmt = $conn->prepare($insert_sql);
+
+                $insert_stmt->bind_param(
+                    "is",
+                    $user_id,
+                    $customer_message
+                );
+
+            } else {
+
+                $insert_sql = "INSERT INTO support_messages
+                               (user_id, order_id, message, status)
+                               VALUES (?, ?, ?, 'Open')";
+
+                $insert_stmt = $conn->prepare($insert_sql);
+
+                $insert_stmt->bind_param(
+                    "iis",
+                    $user_id,
+                    $order_id,
+                    $customer_message
+                );
+            }
+
+            $insert_stmt->execute();
+            $insert_stmt->close();
+
+            $_SESSION["support_message"] = "Your message has been sent successfully.";
+            $_SESSION["support_message_type"] = "success";
+        }
     }
 
     header("Location: contact_support.php");
     exit;
 }
 
-// Get customer's orders for the dropdown.
-$order_stmt = $conn->prepare(
-    "SELECT id, product_name, status
-     FROM orders
-     WHERE user_id = ?
-     ORDER BY order_date DESC"
+// =====================================
+// GET NOTIFICATION
+// =====================================
+
+$notification = $_SESSION["support_message"] ?? "";
+$notification_type = $_SESSION["support_message_type"] ?? "";
+
+unset(
+    $_SESSION["support_message"],
+    $_SESSION["support_message_type"]
 );
 
+// =====================================
+// GET CUSTOMER ORDERS
+// =====================================
+
+$order_sql = "SELECT id, product_name, order_date
+              FROM orders
+              WHERE user_id = ?
+              ORDER BY order_date DESC";
+
+$order_stmt = $conn->prepare($order_sql);
+
 $order_stmt->bind_param("i", $user_id);
+
 $order_stmt->execute();
 
 $orders = $order_stmt->get_result();
 
-// Get customer's support conversations.
-$msg_stmt = $conn->prepare(
-    "SELECT *
-     FROM support_messages
-     WHERE user_id = ?
-     ORDER BY created_at DESC"
-);
+// =====================================
+// GET CUSTOMER SUPPORT MESSAGES
+// =====================================
 
-$msg_stmt->bind_param("i", $user_id);
-$msg_stmt->execute();
+$message_sql = "SELECT *
+                FROM support_messages
+                WHERE user_id = ?
+                ORDER BY created_at DESC";
 
-$messages = $msg_stmt->get_result();
+$message_stmt = $conn->prepare($message_sql);
+
+$message_stmt->bind_param("i", $user_id);
+
+$message_stmt->execute();
+
+$support_messages = $message_stmt->get_result();
 
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
 
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
 
-<title>Contact Support - Kananke Food Hauz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<style>
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-    font-family: Arial, sans-serif;
-}
+    <title>Contact Support - Kananke Food Hauz</title>
 
-body {
-    background: linear-gradient(135deg, #fff7ed, #dcfce7);
-    min-height: 100vh;
-    color: #172018;
-}
+    <style>
 
-header {
-    background: white;
-    padding: 16px 6%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 2px 15px #0001;
-}
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
 
-.brand {
-    color: #f97316;
-    font-size: 23px;
-    font-weight: 800;
-}
+        body {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #fff7ed, #dcfce7);
+            color: #172018;
+        }
 
-.back {
-    background: #111827;
-    color: white;
-    text-decoration: none;
-    padding: 10px 16px;
-    border-radius: 8px;
-}
+        /* HEADER */
 
-.container {
-    max-width: 850px;
-    margin: auto;
-    padding: 40px 20px;
-}
+        header {
+            background: white;
+            padding: 16px 6%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            box-shadow: 0 2px 15px #0001;
+        }
 
-h1 {
-    text-align: center;
-    margin-bottom: 10px;
-}
+        .brand {
+            font-size: 24px;
+            font-weight: 800;
+            color: #f97316;
+        }
 
-.subtitle {
-    color: #667085;
-    text-align: center;
-    margin-bottom: 25px;
-}
+        .back-btn {
+            background: #111827;
+            color: white;
+            padding: 11px 16px;
+            border-radius: 9px;
+            text-decoration: none;
+            font-weight: bold;
+        }
 
-.card {
-    background: white;
-    padding: 25px;
-    border-radius: 16px;
-    box-shadow: 0 8px 25px #0001;
-    margin-bottom: 25px;
-}
+        .back-btn:hover {
+            background: #374151;
+        }
 
-label {
-    display: block;
-    font-weight: bold;
-    margin: 16px 0 8px;
-}
+        /* MAIN */
 
-select, textarea {
-    width: 100%;
-    padding: 13px;
-    border: 1px solid #ddd;
-    border-radius: 9px;
-    font-size: 15px;
-}
+        .container {
+            max-width: 950px;
+            margin: auto;
+            padding: 40px 20px;
+        }
 
-textarea {
-    min-height: 130px;
-    resize: vertical;
-}
+        .page-title {
+            text-align: center;
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
 
-.send-btn {
-    width: 100%;
-    padding: 14px;
-    margin-top: 18px;
-    border: none;
-    border-radius: 9px;
-    background: #f97316;
-    color: white;
-    font-weight: bold;
-    font-size: 16px;
-    cursor: pointer;
-}
+        .subtitle {
+            text-align: center;
+            color: #667085;
+            margin-bottom: 30px;
+        }
 
-.send-btn:hover {
-    background: #ea580c;
-}
+        /* CARDS */
 
-.notice {
-    padding: 13px;
-    border-radius: 8px;
-    margin-bottom: 18px;
-    text-align: center;
-    font-weight: bold;
-}
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 6px 20px #0001;
+            margin-bottom: 25px;
+        }
 
-.success {
-    background: #dcfce7;
-    color: #166534;
-}
+        .card h2 {
+            margin-bottom: 18px;
+            color: #f97316;
+        }
 
-.error {
-    background: #fee2e2;
-    color: #991b1b;
-}
+        /* FORM */
 
-.message-card {
-    border: 1px solid #eee;
-    border-radius: 12px;
-    padding: 17px;
-    margin-top: 15px;
-}
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
 
-.message-card p {
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-}
+        select,
+        textarea {
+            width: 100%;
+            padding: 13px;
+            border: 1px solid #d1d5db;
+            border-radius: 9px;
+            margin-bottom: 18px;
+            font-size: 15px;
+        }
 
-.reply {
-    background: #f0fdf4;
-    border-left: 4px solid #16a34a;
-    padding: 14px;
-    margin-top: 15px;
-    border-radius: 6px;
-}
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+        }
 
-.status {
-    display: inline-block;
-    padding: 6px 11px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: bold;
-    background: #fef3c7;
-    color: #92400e;
-    margin: 10px 0;
-}
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #f97316;
+            box-shadow: 0 0 0 2px #f9731630;
+        }
 
-.status.replied, .status.resolved {
-    background: #dcfce7;
-    color: #166534;
-}
+        .send-btn {
+            background: #f97316;
+            color: white;
+            border: none;
+            padding: 13px 22px;
+            border-radius: 9px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 15px;
+        }
 
-small {
-    color: #667085;
-}
+        .send-btn:hover {
+            background: #ea580c;
+        }
 
-@media(max-width: 600px) {
-    header {
-        padding: 15px 4%;
-    }
+        /* NOTIFICATIONS */
 
-    .brand {
-        font-size: 18px;
-    }
+        .notification {
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
 
-    .card {
-        padding: 18px;
-    }
-}
-</style>
+        .success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+
+        /* MESSAGE HISTORY */
+
+        .support-item {
+            border: 1px solid #eee;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+
+        .support-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .support-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .support-top h3 {
+            color: #f97316;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 7px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .open {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .replied {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .resolved {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .customer-message {
+            background: #fff7ed;
+            padding: 15px;
+            border-radius: 9px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            margin-bottom: 15px;
+        }
+
+        .admin-reply {
+            background: #dcfce7;
+            border-left: 4px solid #16a34a;
+            padding: 15px;
+            border-radius: 9px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            margin-top: 10px;
+        }
+
+        .reply-heading {
+            color: #166534;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .date {
+            color: #667085;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+
+        .empty {
+            text-align: center;
+            color: #667085;
+            padding: 25px;
+        }
+
+        /* MOBILE */
+
+        @media(max-width: 600px) {
+
+            header {
+                padding: 15px 4%;
+            }
+
+            .brand {
+                font-size: 20px;
+            }
+
+            .container {
+                padding: 28px 12px;
+            }
+
+            .page-title {
+                font-size: 29px;
+            }
+
+            .card {
+                padding: 18px;
+            }
+
+        }
+
+    </style>
 
 </head>
 
 <body>
 
-<header>
-    <div class="brand">🍽 Chekananke</div>
-    <a href="index.php" class="back">Back to Home</a>
-</header>
+    <!-- HEADER -->
 
-<div class="container">
+    <header>
 
-    <h1>Contact Support</h1>
+        <div class="brand">
+            🍽 Chekananke
+        </div>
 
-    <p class="subtitle">
-        Have a problem with your order? Send us a message.
-        Our team will assist you.
-    </p>
+        <a href="index.php" class="back-btn">
+            Back to Home
+        </a>
 
-    <div class="card">
+    </header>
 
-        <h2>Send a Message</h2>
+    <!-- MAIN -->
 
-        <?php if ($message !== ""): ?>
-            <div class="notice <?php echo htmlspecialchars($message_type); ?>">
-                <?php echo htmlspecialchars($message); ?>
+    <main class="container">
+
+        <h1 class="page-title">
+            Contact Support
+        </h1>
+
+        <p class="subtitle">
+            Have a question or concern? Send us a message.
+        </p>
+
+        <!-- NOTIFICATION -->
+
+        <?php if ($notification !== ""): ?>
+
+            <div class="notification <?php echo htmlspecialchars($notification_type); ?>">
+                <?php echo htmlspecialchars($notification); ?>
             </div>
+
         <?php endif; ?>
 
-        <form method="POST" action="contact_support.php">
+        <!-- SEND MESSAGE -->
 
-            <input
-                type="hidden"
-                name="csrf_token"
-                value="<?php echo htmlspecialchars($_SESSION["support_csrf"]); ?>"
-            >
+        <section class="card">
 
-            <label for="order_id">Related Order (Optional)</label>
+            <h2>Send Us a Message</h2>
 
-            <select name="order_id" id="order_id">
-                <option value="">General Inquiry</option>
+            <form method="POST" action="contact_support.php">
 
-                <?php while ($order = $orders->fetch_assoc()): ?>
-                    <option value="<?php echo (int) $order["id"]; ?>">
-                        Order #<?php echo (int) $order["id"]; ?>
-                        - <?php echo htmlspecialchars($order["product_name"]); ?>
-                        (<?php echo htmlspecialchars($order["status"]); ?>)
+                <input
+                    type="hidden"
+                    name="csrf_token"
+                    value="<?php echo htmlspecialchars($_SESSION["csrf_token"]); ?>"
+                >
+
+                <label for="order_id">
+                    Select Order (Optional)
+                </label>
+
+                <select name="order_id" id="order_id">
+
+                    <option value="">
+                        General Concern / No Order
                     </option>
-                <?php endwhile; ?>
 
-            </select>
+                    <?php while ($order = $orders->fetch_assoc()): ?>
 
-            <label for="message">Your Message</label>
+                        <option value="<?php echo (int)$order["id"]; ?>">
 
-            <textarea
-                name="message"
-                id="message"
-                placeholder="Describe your concern or question..."
-                minlength="3"
-                maxlength="5000"
-                required
-            ></textarea>
+                            Order #<?php echo (int)$order["id"]; ?>
+                            -
+                            <?php echo htmlspecialchars($order["product_name"]); ?>
 
-            <button
-                type="submit"
-                name="send_message"
-                class="send-btn"
-            >
-                Send Message
-            </button>
+                        </option>
 
-        </form>
+                    <?php endwhile; ?>
 
-    </div>
+                </select>
 
-    <div class="card">
+                <label for="message">
+                    Your Message
+                </label>
 
-        <h2>My Support Messages</h2>
+                <textarea
+                    name="message"
+                    id="message"
+                    maxlength="5000"
+                    placeholder="Write your question or concern here..."
+                    required
+                ></textarea>
 
-        <?php if ($messages->num_rows > 0): ?>
+                <button type="submit" class="send-btn">
+                    Send Message
+                </button>
 
-            <?php while ($msg = $messages->fetch_assoc()): ?>
+            </form>
 
-                <div class="message-card">
+        </section>
 
-                    <small>
-                        Message #<?php echo (int) $msg["id"]; ?>
-                        <?php if (!empty($msg["order_id"])): ?>
-                            | Order #<?php echo (int) $msg["order_id"]; ?>
-                        <?php endif; ?>
-                        | <?php echo htmlspecialchars($msg["created_at"]); ?>
-                    </small>
+        <!-- MESSAGE HISTORY -->
 
-                    <br>
+        <section class="card">
 
-                    <span class="status <?php echo strtolower($msg["status"]) === "open" ? "" : htmlspecialchars(strtolower($msg["status"])); ?>">
-                        <?php echo htmlspecialchars($msg["status"]); ?>
-                    </span>
+            <h2>My Support Messages</h2>
 
-                    <p>
-                        <?php echo nl2br(htmlspecialchars($msg["message"])); ?>
-                    </p>
+            <?php if ($support_messages->num_rows > 0): ?>
 
-                    <?php if (!empty($msg["admin_reply"])): ?>
+                <?php while ($row = $support_messages->fetch_assoc()): ?>
 
-                        <div class="reply">
+                    <?php
 
-                            <strong>Owner/Admin Reply</strong>
+                    $status = strtolower(
+                        trim((string)($row["status"] ?? "open"))
+                    );
 
-                            <p>
-                                <?php echo nl2br(htmlspecialchars($msg["admin_reply"])); ?>
-                            </p>
+                    $status_class = match ($status) {
+                        "open" => "open",
+                        "replied" => "replied",
+                        "resolved" => "resolved",
+                        default => "open"
+                    };
 
-                            <?php if (!empty($msg["replied_at"])): ?>
-                                <small>
-                                    <?php echo htmlspecialchars($msg["replied_at"]); ?>
-                                </small>
-                            <?php endif; ?>
+                    ?>
+
+                    <div class="support-item">
+
+                        <div class="support-top">
+
+                            <h3>
+                                Message #<?php echo (int)$row["id"]; ?>
+                            </h3>
+
+                            <span class="status <?php echo $status_class; ?>">
+                                <?php echo htmlspecialchars($row["status"]); ?>
+                            </span>
 
                         </div>
 
-                    <?php else: ?>
+                        <?php if (!empty($row["order_id"])): ?>
 
-                        <p>
-                            <small>Waiting for the owner/admin to reply.</small>
+                            <p class="date">
+                                Related Order: #<?php echo (int)$row["order_id"]; ?>
+                            </p>
+
+                        <?php endif; ?>
+
+                        <p class="reply-heading">
+                            Your Message:
                         </p>
 
-                    <?php endif; ?>
+                        <div class="customer-message"><?php
+                            echo htmlspecialchars($row["message"]);
+                        ?></div>
 
+                        <?php if (!empty($row["admin_reply"])): ?>
+
+                            <p class="reply-heading">
+                                Admin Reply:
+                            </p>
+
+                            <div class="admin-reply"><?php
+                                echo htmlspecialchars($row["admin_reply"]);
+                            ?></div>
+
+                            <?php if (!empty($row["replied_at"])): ?>
+
+                                <p class="date">
+                                    Replied:
+                                    <?php
+                                    echo htmlspecialchars(
+                                        date("M d, Y h:i A", strtotime($row["replied_at"]))
+                                    );
+                                    ?>
+                                </p>
+
+                            <?php endif; ?>
+
+                        <?php else: ?>
+
+                            <p class="date">
+                                Waiting for admin response.
+                            </p>
+
+                        <?php endif; ?>
+
+                        <p class="date">
+                            Sent:
+                            <?php
+                            echo htmlspecialchars(
+                                date("M d, Y h:i A", strtotime($row["created_at"]))
+                            );
+                            ?>
+                        </p>
+
+                    </div>
+
+                <?php endwhile; ?>
+
+            <?php else: ?>
+
+                <div class="empty">
+                    You haven't sent any support messages yet.
                 </div>
 
-            <?php endwhile; ?>
+            <?php endif; ?>
 
-        <?php else: ?>
+        </section>
 
-            <p style="margin-top:15px;color:#667085;">
-                You haven't sent any support messages yet.
-            </p>
-
-        <?php endif; ?>
-
-    </div>
-
-</div>
+    </main>
 
 </body>
+
 </html>
 
 <?php
+
 $order_stmt->close();
-$msg_stmt->close();
+$message_stmt->close();
 $conn->close();
+
 ?>
