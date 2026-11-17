@@ -9,14 +9,18 @@ if (!isset($_SESSION["loggedIn"]) || $_SESSION["loggedIn"] !== true) {
 
 require_once "db.php";
 
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
 $user_id = (int)($_SESSION["user_id"] ?? 0);
 $unread_replies = 0;
 
+// Count unread admin replies
 if ($user_id > 0) {
     $stmt = $conn->prepare(
         "SELECT COUNT(*) AS unread_count
          FROM support_replies r
-         INNER JOIN support_messages s ON s.id = r.support_id
+         INNER JOIN support_messages s
+            ON s.id = r.support_id
          WHERE s.user_id = ?
            AND r.sender_role = 'admin'
            AND r.read_at IS NULL"
@@ -36,58 +40,80 @@ $conn->close();
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <title>Kananke Food Hauz</title>
 
 <style>
+
+/* =====================================
+   GENERAL
+===================================== */
+
 * {
-    box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: Arial, sans-serif;
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
 }
 
 body {
-    min-height: 100vh;
+    font-family: Arial, Helvetica, sans-serif;
     background: linear-gradient(135deg, #fff7ed, #dcfce7);
     color: #172018;
+    min-height: 100vh;
+    overflow-x: hidden;
 }
 
-button {
-    cursor: pointer;
-    border: 0;
+a {
+    text-decoration: none;
 }
+
+/* =====================================
+   HEADER
+===================================== */
 
 header {
-    background: #fff;
-    padding: 16px 6%;
+    width: 100%;
+    background: white;
+    padding: 15px 6%;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    box-shadow: 0 2px 15px #0001;
+    gap: 20px;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.08);
     position: sticky;
     top: 0;
-    z-index: 5;
+    z-index: 1000;
 }
 
 .brand {
     font-size: 24px;
     font-weight: 800;
     color: #f97316;
+    white-space: nowrap;
 }
 
 nav {
     display: flex;
-    gap: 22px;
     align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 18px;
 }
 
 nav a {
     color: #344054;
-    text-decoration: none;
+    font-size: 14px;
     font-weight: 600;
+    transition: 0.2s;
 }
 
 nav a:hover {
@@ -97,11 +123,12 @@ nav a:hover {
 .support-link {
     background: #f97316;
     color: white !important;
-    padding: 9px 13px;
+    padding: 10px 13px;
     border-radius: 9px;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    gap: 7px;
 }
 
 .support-link:hover {
@@ -111,238 +138,493 @@ nav a:hover {
 .notification-count {
     background: #dc2626;
     color: white;
-    min-width: 21px;
-    height: 21px;
-    padding: 0 6px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
     border-radius: 50px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
-    font-weight: 800;
+    font-size: 11px;
+    font-weight: bold;
 }
 
 .logout {
     background: #111827;
-    color: #fff;
-    padding: 9px 16px;
+    color: white !important;
+    padding: 10px 14px;
     border-radius: 9px;
-    text-decoration: none;
-    font-weight: 600;
 }
 
 .logout:hover {
     background: #374151;
 }
 
+/* =====================================
+   MAIN CONTENT
+===================================== */
+
 main {
-    max-width: 1100px;
+    width: 100%;
+    max-width: 1150px;
     margin: auto;
-    padding: 50px 20px;
+    padding: 45px 20px;
 }
+
+.user-info {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #475467;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+/* =====================================
+   HERO
+===================================== */
 
 .hero {
-    background: #fff;
-    border-radius: 24px;
-    padding: 55px 45px;
+    background: white;
+    border-radius: 22px;
+    padding: 45px;
     display: grid;
-    grid-template-columns: 1.3fr .7fr;
+    grid-template-columns: 1.2fr 0.8fr;
+    align-items: center;
     gap: 30px;
-    box-shadow: 0 10px 35px #0001;
+    box-shadow: 0 10px 35px rgba(0,0,0,0.08);
 }
 
-.hero h1 {
+.hero-content h1 {
     font-size: 46px;
-    line-height: 1.1;
+    line-height: 1.15;
     margin-bottom: 18px;
 }
 
-.hero h1 span {
+.hero-content h1 span {
     color: #f97316;
 }
 
-.hero p {
-    font-size: 18px;
+.hero-content p {
+    font-size: 17px;
     color: #667085;
-    line-height: 1.6;
+    line-height: 1.7;
     margin-bottom: 20px;
 }
 
 .hero-box {
-    background: transparent;
-    border-radius: 0;
+    width: 100%;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 250px;
-    overflow: visible;
 }
 
 .hero-box img {
     display: block;
     width: 100%;
-    height: auto;
+    max-width: 330px;
     max-height: 300px;
     object-fit: contain;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
 }
 
 .btn {
-    display: inline-block;
-    padding: 13px 24px;
-    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 12px 22px;
+    border-radius: 9px;
     background: #f97316;
     color: white;
-    font-weight: 700;
-    text-decoration: none;
-    margin-top: 10px;
+    font-size: 15px;
+    font-weight: bold;
+    transition: 0.2s;
 }
 
 .btn:hover {
     background: #ea580c;
 }
 
+/* =====================================
+   SECTION TITLES
+===================================== */
+
 .section-title {
     text-align: center;
     margin: 55px 0 25px;
     font-size: 30px;
+    color: #172018;
 }
+
+/* =====================================
+   PRODUCTS
+===================================== */
 
 .products {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 22px;
+    width: 100%;
 }
 
 .card {
-    background: #fff;
+    background: white;
     padding: 25px;
-    border-radius: 18px;
-    box-shadow: 0 8px 25px #0001;
+    border-radius: 17px;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.07);
+    min-width: 0;
 }
 
 .card .emoji {
-    font-size: 45px;
+    font-size: 42px;
+    margin-bottom: 12px;
 }
 
 .card h3 {
-    margin: 12px 0 7px;
+    font-size: 19px;
+    margin-bottom: 8px;
+    color: #172018;
 }
 
 .card p {
+    font-size: 14px;
     color: #667085;
     line-height: 1.5;
+    margin-bottom: 12px;
 }
 
 .price {
-    display: inline-block;
-    color: white;
-    background: #f97316;
-    font-weight: 800;
-    font-size: 16px;
-    padding: 10px 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 10px 17px;
     border-radius: 8px;
-    margin-top: 5px;
-    text-decoration: none;
+    background: #f97316;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    transition: 0.2s;
 }
 
 .price:hover {
     background: #ea580c;
 }
 
+/* =====================================
+   ABOUT
+===================================== */
+
 .about-card {
     text-align: center;
-    line-height: 1.6;
+    line-height: 1.7;
     color: #667085;
 }
 
-.user-info {
-    text-align: center;
-    margin-bottom: 20px;
-    color: #667085;
-    font-size: 14px;
-}
+/* =====================================
+   FOOTER
+===================================== */
 
 footer {
     text-align: center;
-    padding: 30px;
+    padding: 28px 15px;
     color: #667085;
+    font-size: 13px;
 }
 
-@media(max-width:700px) {
+/* =====================================
+   TABLET
+===================================== */
+
+@media screen and (max-width: 900px) {
+
     header {
-        flex-wrap: wrap;
-        gap: 12px;
+        padding: 15px 3%;
+        flex-direction: column;
+        gap: 13px;
     }
 
     nav {
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-
-    nav a {
-        font-size: 13px;
+        width: 100%;
+        gap: 12px;
     }
 
     .hero {
-        grid-template-columns: 1fr;
         padding: 30px;
     }
 
-    .hero h1 {
-        font-size: 36px;
-    }
-
-    .hero-box {
-        height: 180px;
-        min-height: 180px;
+    .hero-content h1 {
+        font-size: 38px;
     }
 
     .products {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
+
+/* =====================================
+   MOBILE PHONES
+===================================== */
+
+@media screen and (max-width: 600px) {
+
+    body {
+        width: 100%;
+        overflow-x: hidden;
+    }
+
+    header {
+        position: relative;
+        width: 100%;
+        padding: 12px 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .brand {
+        width: 100%;
+        text-align: center;
+        font-size: 22px;
+    }
+
+    nav {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+        gap: 7px;
+    }
+
+    nav a {
+        font-size: 12px;
+        padding: 9px 8px;
+        border-radius: 7px;
+    }
+
+    .support-link {
+        padding: 9px 10px;
+    }
+
+    .notification-count {
+        min-width: 19px;
+        height: 19px;
+        font-size: 10px;
+    }
+
+    main {
+        width: 100%;
+        padding: 22px 12px;
+        margin: 0 auto;
+    }
+
+    .user-info {
+        font-size: 13px;
+        margin-bottom: 16px;
+    }
+
+    .hero {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 25px 17px;
+        gap: 20px;
+        text-align: center;
+        border-radius: 17px;
+    }
+
+    .hero-content {
+        width: 100%;
+    }
+
+    .hero-content h1 {
+        font-size: 31px;
+        line-height: 1.2;
+        margin-bottom: 13px;
+    }
+
+    .hero-content p {
+        font-size: 14px;
+        line-height: 1.6;
+        margin-bottom: 16px;
+    }
+
+    .hero-box {
+        width: 100%;
+        min-height: 130px;
+    }
+
+    .hero-box img {
+        width: 100%;
+        max-width: 230px;
+        max-height: 170px;
+        object-fit: contain;
+    }
+
+    .btn {
+        width: 100%;
+        max-width: 220px;
+        min-height: 44px;
+        font-size: 14px;
+    }
+
+    .section-title {
+        font-size: 24px;
+        margin: 32px 0 18px;
+    }
+
+    .products {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 13px;
+    }
+
+    .card {
+        width: 100%;
+        padding: 18px;
+        border-radius: 14px;
+    }
+
+    .card .emoji {
+        font-size: 35px;
+        margin-bottom: 8px;
+    }
+
+    .card h3 {
+        font-size: 17px;
+        margin-bottom: 6px;
+    }
+
+    .card p {
+        font-size: 13px;
+        margin-bottom: 10px;
+    }
+
+    .price {
+        min-height: 40px;
+        padding: 10px 17px;
+        font-size: 13px;
+    }
+
+    .about-card {
+        padding: 20px 15px;
+        font-size: 14px;
+    }
+
+    footer {
+        padding: 22px 12px;
+        font-size: 12px;
+    }
+}
+
+/* =====================================
+   VERY SMALL PHONES
+===================================== */
+
+@media screen and (max-width: 360px) {
+
+    .brand {
+        font-size: 20px;
+    }
+
+    nav {
+        gap: 5px;
+    }
+
+    nav a {
+        font-size: 11px;
+        padding: 8px 7px;
+    }
+
+    .hero-content h1 {
+        font-size: 27px;
+    }
+
+    .section-title {
+        font-size: 22px;
+    }
+
+    .card {
+        padding: 16px;
+    }
+}
+
 </style>
+
 </head>
 
 <body>
 
+<!-- =====================================
+     HEADER / NAVIGATION
+===================================== -->
+
 <header>
-    <div class="brand">🍽 Chekananke</div>
+
+    <div class="brand">
+        🍽 Kananke Food Hauz
+    </div>
 
     <nav>
+
         <a href="#home">Home</a>
+
         <a href="#products">Products</a>
+
         <a href="#about">About</a>
-        <a href="order_history.php">Order History</a>
+
+        <a href="order_history.php">
+            Order History
+        </a>
 
         <a href="contact_support.php" class="support-link">
+
             Contact Support
 
             <?php if ($unread_replies > 0): ?>
+
                 <span class="notification-count">
-                    <?php echo $unread_replies > 99 ? "99+" : $unread_replies; ?>
+                    <?= $unread_replies > 99 ? "99+" : $unread_replies ?>
                 </span>
+
             <?php endif; ?>
+
         </a>
 
-        <a href="logout.php" class="logout">Log Out</a>
+        <a href="logout.php" class="logout">
+            Log Out
+        </a>
+
     </nav>
+
 </header>
+
+<!-- =====================================
+     MAIN PAGE
+===================================== -->
 
 <main id="home">
 
     <div class="user-info">
+
         <h3>
-            Welcome, <?= htmlspecialchars($_SESSION["user_email"] ?? "") ?>
+            Welcome,
+            <?= htmlspecialchars($_SESSION["user_email"] ?? "Customer", ENT_QUOTES, "UTF-8") ?>
         </h3>
+
     </div>
 
+    <!-- =====================================
+         HERO SECTION
+    ====================================== -->
+
     <section class="hero">
-        <div>
+
+        <div class="hero-content">
+
             <h1>
                 Good Food.
                 <br>
@@ -356,49 +638,115 @@ footer {
                 and serving customers online.
             </p>
 
-            <a href="#products" class="btn">View Products</a>
+            <a href="#products" class="btn">
+                View Products
+            </a>
+
         </div>
 
         <div class="hero-box">
-            <img src="kanankelogo.png" alt="KANANKE'S FOOD HAUZ Logo">
+
+            <img
+                src="kanankelogo.png"
+                alt="Kananke Food Hauz Logo"
+            >
+
         </div>
+
     </section>
 
-    <h2 class="section-title" id="products">Our Products</h2>
+    <!-- =====================================
+         PRODUCTS SECTION
+    ====================================== -->
+
+    <h2 class="section-title" id="products">
+        Our Products
+    </h2>
 
     <section class="products">
+
+        <!-- FOOD BY TRAY -->
+
         <div class="card">
+
             <div class="emoji">🍗</div>
+
             <h3>Food by Tray</h3>
-            <p>Single Order Food</p>
-            <a href="tray.php" class="price">View Menu</a>
+
+            <p>
+                Single Order Food
+            </p>
+
+            <a href="tray.php" class="price">
+                View Menu
+            </a>
+
         </div>
 
+        <!-- FOOD BUNDLE -->
+
         <div class="card">
+
             <div class="emoji">🍱</div>
+
             <h3>Food Bundle</h3>
-            <p>Bundle food with combos</p>
-            <a href="bundle.php" class="price">View Menu</a>
+
+            <p>
+                Bundle food with combos
+            </p>
+
+            <a href="bundle.php" class="price">
+                View Menu
+            </a>
+
         </div>
 
+        <!-- ADDITIONALS -->
+
         <div class="card">
+
             <div class="emoji">🛒</div>
+
             <h3>Additionals</h3>
-            <p>Add some additional product</p>
-            <a href="additionals.php" class="price">View Menu</a>
+
+            <p>
+                Add some additional product
+            </p>
+
+            <a href="additionals.php" class="price">
+                View Menu
+            </a>
+
         </div>
+
     </section>
 
-    <h2 class="section-title" id="about">About Us</h2>
+    <!-- =====================================
+         ABOUT SECTION
+    ====================================== -->
+
+    <h2 class="section-title" id="about">
+        About Us
+    </h2>
 
     <section class="card about-card">
-        <p>NOT DONE YET!</p>
+
+        <p>
+            NOT DONE YET!
+        </p>
+
     </section>
 
 </main>
 
+<!-- =====================================
+     FOOTER
+===================================== -->
+
 <footer>
-    © 2026 Kananke Food Hauz. All rights reserved.
+
+    © <?= date("Y") ?> Kananke Food Hauz. All rights reserved.
+
 </footer>
 
 </body>
