@@ -207,7 +207,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f3f5f9;
+    background: #f58220;
     font-family: Arial, sans-serif;
     color: #222;
 }
