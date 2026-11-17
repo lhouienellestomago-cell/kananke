@@ -1,26 +1,40 @@
 <?php
 
+// =====================================
+// PHILIPPINE TIMEZONE
+// =====================================
+
+date_default_timezone_set("Asia/Manila");
+
+// =====================================
+// DATABASE ERROR REPORTING
+// =====================================
+
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+// =====================================
+// DATABASE ENVIRONMENT VARIABLES
+// =====================================
 
 $host = getenv("DB_HOST");
 $user = getenv("DB_USER");
 $password = getenv("DB_PASSWORD");
 $database = getenv("DB_NAME");
-$port = (int) getenv("DB_PORT");
+$port = getenv("DB_PORT");
 
-if (
-    empty($host) ||
-    empty($user) ||
-    empty($database) ||
-    empty($port) ||
-    $password === false
-) {
-    error_log("Database configuration is incomplete.");
-    http_response_code(500);
-    exit("Database configuration error.");
+// Default MySQL port if DB_PORT is not configured.
+if (!$port || !is_numeric($port)) {
+    $port = 3306;
+} else {
+    $port = (int) $port;
 }
 
+// =====================================
+// CONNECT TO DATABASE
+// =====================================
+
 try {
+
     $conn = new mysqli(
         $host,
         $user,
@@ -29,15 +43,16 @@ try {
         $port
     );
 
+    // Set character encoding.
     $conn->set_charset("utf8mb4");
 
-    // Use UTC consistently for database timestamps.
-    $conn->query("SET time_zone = '+00:00'");
+    // Set MySQL session timezone to Philippines (UTC+8).
+    $conn->query("SET time_zone = '+08:00'");
 
 } catch (mysqli_sql_exception $e) {
-    error_log("Database connection failed: " . $e->getMessage());
-    http_response_code(500);
-    exit("Database connection failed.");
-}
 
-// Do not add a closing PHP tag.
+    error_log("Database connection error: " . $e->getMessage());
+
+    die("Database connection failed. Please try again later.");
+
+}
