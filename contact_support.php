@@ -74,7 +74,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $order_id = null;
         $valid_order = true;
 
-        if ($order_id_input !== "") {
+        // General Concern and Other do not require an order ID.
+        if (
+            $order_id_input !== "" &&
+            strtolower($order_id_input) !== "other"
+        ) {
 
             $order_id = filter_var(
                 $order_id_input,
@@ -82,7 +86,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             );
 
             if (!$order_id || $order_id < 1) {
+
                 $valid_order = false;
+
             } else {
 
                 // Make sure the selected order belongs to this customer.
@@ -552,6 +558,10 @@ $support_messages = $message_stmt->get_result();
                         General Concern / No Order
                     </option>
 
+                    <option value="other">
+                        Other
+                    </option>
+
                     <?php while ($order = $orders->fetch_assoc()): ?>
 
                         <option value="<?php echo (int)$order["id"]; ?>">
@@ -629,6 +639,12 @@ $support_messages = $message_stmt->get_result();
 
                             <p class="date">
                                 Related Order: #<?php echo (int)$row["order_id"]; ?>
+                            </p>
+
+                        <?php else: ?>
+
+                            <p class="date">
+                                General Concern / Other
                             </p>
 
                         <?php endif; ?>
