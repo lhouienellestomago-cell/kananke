@@ -342,10 +342,9 @@ footer {
     color: #667085;
 }
 
+
 /* TABLET */
-
 @media(max-width:900px) {
-
     header {
         flex-wrap: wrap;
     }
@@ -361,13 +360,10 @@ footer {
     .products {
         grid-template-columns: repeat(2, 1fr);
     }
-
 }
 
-/* MOBILE */
-
+/* MOBILE - RESTORED LAYOUT */
 @media(max-width:600px) {
-
     header {
         padding: 15px 4%;
         align-items: flex-start;
@@ -380,6 +376,7 @@ footer {
     nav {
         width: 100%;
         gap: 10px;
+        align-items: center;
     }
 
     nav a {
@@ -389,7 +386,14 @@ footer {
     .support-link {
         width: 44px;
         height: 44px;
+        min-width: 44px;
         padding: 0;
+        border-radius: 50%;
+    }
+
+    .notification-badge {
+        top: -6px;
+        right: -6px;
     }
 
     main {
@@ -397,7 +401,9 @@ footer {
     }
 
     .hero {
+        grid-template-columns: 1fr;
         padding: 30px 22px;
+        gap: 20px;
     }
 
     .hero h1 {
@@ -413,10 +419,29 @@ footer {
         min-height: 180px;
     }
 
-    .products {
-        grid-template-columns: 1fr;
+    .hero-box img {
+        width: 100%;
+        max-height: 180px;
+        object-fit: contain;
     }
 
+    .products {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .card {
+        padding: 20px;
+    }
+
+    .facebook-button {
+        width: 54px;
+        height: 54px;
+    }
+
+    .facebook-button span {
+        font-size: 40px;
+    }
 }
 
 </style>
