@@ -16,19 +16,19 @@ $error = "";
 $fullName = "";
 $email = "";
 
-// CSRF token
+// Create CSRF token
 if (empty($_SESSION["signup_csrf"])) {
     $_SESSION["signup_csrf"] = bin2hex(random_bytes(32));
 }
 
-// Detect if the entire POST request exceeded PHP's post_max_size
+// Detect request exceeding PHP post_max_size
 if (
     $_SERVER["REQUEST_METHOD"] === "POST" &&
     empty($_POST) &&
     empty($_FILES) &&
     !empty($_SERVER["CONTENT_LENGTH"])
 ) {
-    $error = "The uploaded data is too large for the server. Please use a smaller profile picture.";
+    $error = "The uploaded data is too large. Please use a smaller picture.";
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
@@ -39,15 +39,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
     $confirmPassword = $_POST["confirm_password"] ?? "";
     $csrfToken = $_POST["csrf_token"] ?? "";
 
-    // Validate CSRF token
     if (
         empty($_SESSION["signup_csrf"]) ||
         !hash_equals($_SESSION["signup_csrf"], $csrfToken)
     ) {
-        $error = "Invalid form submission. Please refresh the page and try again.";
+        $error = "Invalid form submission. Please refresh and try again.";
     }
 
-    // Validate fields
     elseif (
         $fullName === "" ||
         $email === "" ||
@@ -69,21 +67,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
         $error = "Email address is too long.";
     }
 
-    elseif (strlen($password) < 8) {
-        $error = "Password must be at least 8 characters.";
-    }
-
-    elseif (strlen($password) > 72) {
-        $error = "Password must not exceed 72 characters.";
+    elseif (strlen($password) < 8 || strlen($password) > 72) {
+        $error = "Password must be between 8 and 72 characters.";
     }
 
     elseif ($password !== $confirmPassword) {
         $error = "Passwords do not match.";
     }
 
-    // Validate profile picture upload
+    // Check uploaded picture
     elseif (!isset($_FILES["profile_picture"])) {
-        $error = "Profile picture was not received. Please select your picture again.";
+        $error = "Please select or take a profile picture.";
     }
 
     elseif ($_FILES["profile_picture"]["error"] !== UPLOAD_ERR_OK) {
@@ -92,23 +86,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
 
             case UPLOAD_ERR_INI_SIZE:
             case UPLOAD_ERR_FORM_SIZE:
-                $error = "Your profile picture exceeds the server upload limit. Please use a smaller image.";
+                $error = "Your picture is too large for the server. Please use a smaller picture.";
                 break;
 
             case UPLOAD_ERR_PARTIAL:
-                $error = "Your profile picture was only partially uploaded. Please try again.";
+                $error = "Your picture was only partially uploaded. Please try again.";
                 break;
 
             case UPLOAD_ERR_NO_FILE:
-                $error = "Please select a profile picture.";
+                $error = "Please select or take a profile picture.";
                 break;
 
             case UPLOAD_ERR_NO_TMP_DIR:
-                $error = "The server upload folder is missing. Please contact the administrator.";
+                $error = "The server upload folder is missing.";
                 break;
 
             case UPLOAD_ERR_CANT_WRITE:
-                $error = "The server could not save your uploaded picture.";
+                $error = "The server could not save your picture.";
                 break;
 
             case UPLOAD_ERR_EXTENSION:
@@ -116,15 +110,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
                 break;
 
             default:
-                $error = "Profile picture upload failed. Please try again.";
+                $error = "Picture upload failed. Please try again.";
                 break;
         }
     }
 
-    elseif (
-        !is_uploaded_file($_FILES["profile_picture"]["tmp_name"])
-    ) {
-        $error = "The uploaded picture could not be verified. Please try again.";
+    elseif (!is_uploaded_file($_FILES["profile_picture"]["tmp_name"])) {
+        $error = "The uploaded picture could not be verified.";
     }
 
     elseif ($_FILES["profile_picture"]["size"] > 2 * 1024 * 1024) {
@@ -133,10 +125,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
 
     else {
 
-        // Check actual image type
-        $imageInfo = @getimagesize(
-            $_FILES["profile_picture"]["tmp_name"]
-        );
+        // Verify actual image type
+        $imageInfo = @getimagesize($_FILES["profile_picture"]["tmp_name"]);
 
         $allowedTypes = [
             IMAGETYPE_JPEG => "image/jpeg",
@@ -144,29 +134,25 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
             IMAGETYPE_WEBP => "image/webp"
         ];
 
-        if (
-            !$imageInfo ||
-            !isset($allowedTypes[$imageInfo[2]])
-        ) {
-            $error = "Invalid picture. Please upload a JPG, PNG, or WEBP image.";
-        }
+        if (!$imageInfo || !isset($allowedTypes[$imageInfo[2]])) {
 
-        else {
+            $error = "Unsupported image format. Please use JPG, PNG, or WEBP. If using an iPhone, choose Most Compatible in Camera settings.";
+
+        } else {
 
             $pictureType = $allowedTypes[$imageInfo[2]];
 
-            // Read picture data
             $pictureData = file_get_contents(
                 $_FILES["profile_picture"]["tmp_name"]
             );
 
             if ($pictureData === false || $pictureData === "") {
-                $error = "Could not read your profile picture. Please try again.";
-            }
 
-            else {
+                $error = "Could not read your profile picture.";
 
-                // Check whether email already exists
+            } else {
+
+                // Check duplicate email
                 $stmt = $conn->prepare(
                     "SELECT id FROM users WHERE email = ? LIMIT 1"
                 );
@@ -174,9 +160,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
                 $stmt->bind_param("s", $email);
                 $stmt->execute();
 
-                $result = $stmt->get_result();
-                $exists = $result->num_rows > 0;
-
+                $exists = $stmt->get_result()->num_rows > 0;
                 $stmt->close();
 
                 if ($exists) {
@@ -185,17 +169,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
 
                 } else {
 
-                    // Hash password
                     $hashedPassword = password_hash(
                         $password,
                         PASSWORD_DEFAULT
                     );
 
-                    // New accounts require admin approval
                     $role = "user";
                     $status = "Pending";
 
-                    // Insert customer and profile picture into database
+                    // Save customer and picture in MySQL
                     $stmt = $conn->prepare(
                         "INSERT INTO users
                         (
@@ -210,7 +192,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $error === "") {
                         VALUES (?, ?, ?, ?, ?, ?, ?)"
                     );
 
-                    // BLOB parameter is supplied separately
                     $nullBlob = null;
 
                     $stmt->bind_param(
@@ -277,73 +258,64 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 25px 20px;
+    padding: 25px 15px;
 }
 
 .signup-card {
     width: 100%;
     max-width: 570px;
     background: white;
-    padding: 45px 60px;
-    border-radius: 28px;
+    padding: 40px 50px;
+    border-radius: 25px;
     box-shadow: 0 15px 45px #0002;
 }
 
 .logo {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    font-size: 42px;
+    text-align: center;
+    font-size: 38px;
     font-weight: 800;
     color: #f97316;
-    margin-bottom: 12px;
-    text-align: center;
-}
-
-.logo-icon {
-    font-size: 38px;
+    margin-bottom: 10px;
 }
 
 .subtitle {
-    color: #667085;
-    margin-bottom: 30px;
     text-align: center;
-    font-size: 20px;
+    color: #667085;
+    font-size: 18px;
+    margin-bottom: 28px;
 }
 
 h1 {
-    font-size: 27px;
     text-align: center;
-    margin-bottom: 25px;
-    color: #172018;
+    margin-bottom: 24px;
+    font-size: 26px;
 }
 
 label {
     display: block;
-    margin: 18px 0 10px;
-    font-weight: 700;
-    font-size: 17px;
+    margin: 17px 0 8px;
+    font-weight: bold;
 }
 
 input {
     width: 100%;
-    padding: 15px 16px;
+    padding: 14px;
     border: 1px solid #d0d5dd;
     border-radius: 12px;
-    outline: none;
     font-size: 16px;
     background: white;
 }
 
 input:focus {
+    outline: none;
     border-color: #f97316;
     box-shadow: 0 0 0 3px #f9731620;
 }
 
 input[type="file"] {
-    padding: 12px;
     cursor: pointer;
+    padding: 12px;
+    font-size: 14px;
 }
 
 .hint {
@@ -353,16 +325,38 @@ input[type="file"] {
     line-height: 1.5;
 }
 
+.preview-container {
+    display: none;
+    text-align: center;
+    margin-top: 18px;
+}
+
+.preview-container img {
+    width: 135px;
+    height: 135px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 4px solid #f97316;
+    background: #f3f4f6;
+}
+
+.preview-text {
+    margin-top: 8px;
+    color: #15803d;
+    font-size: 14px;
+    font-weight: bold;
+}
+
 .btn {
     width: 100%;
-    padding: 17px;
+    padding: 16px;
     border: none;
-    border-radius: 13px;
+    border-radius: 12px;
     background: #f97316;
     color: white;
-    font-weight: 700;
-    font-size: 19px;
-    margin-top: 28px;
+    font-size: 18px;
+    font-weight: bold;
+    margin-top: 25px;
     cursor: pointer;
 }
 
@@ -375,7 +369,6 @@ input[type="file"] {
     border-radius: 10px;
     margin-bottom: 18px;
     text-align: center;
-    font-size: 15px;
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
@@ -386,23 +379,23 @@ input[type="file"] {
 }
 
 .demo {
-    font-size: 15px;
+    font-size: 14px;
     color: #667085;
-    margin-top: 24px;
+    margin-top: 22px;
     text-align: center;
     line-height: 1.6;
 }
 
 .login-link {
     text-align: center;
-    margin-top: 24px;
-    font-size: 16px;
+    margin-top: 22px;
     color: #667085;
+    font-size: 15px;
 }
 
 a {
     color: #f97316;
-    font-weight: 700;
+    font-weight: bold;
     text-decoration: none;
 }
 
@@ -412,32 +405,29 @@ a:hover {
 
 @media (max-width: 600px) {
 
+    body {
+        padding: 15px;
+    }
+
     .signup-card {
-        padding: 32px 22px;
+        padding: 30px 20px;
+        border-radius: 20px;
     }
 
     .logo {
         font-size: 30px;
     }
 
-    .logo-icon {
-        font-size: 29px;
-    }
-
     .subtitle {
-        font-size: 17px;
-    }
-
-    h1 {
-        font-size: 24px;
-    }
-
-    label {
         font-size: 16px;
     }
 
+    h1 {
+        font-size: 23px;
+    }
+
     input {
-        padding: 14px;
+        padding: 13px;
         font-size: 16px;
     }
 
@@ -446,9 +436,9 @@ a:hover {
         font-size: 17px;
     }
 
-    .demo,
-    .login-link {
-        font-size: 14px;
+    .preview-container img {
+        width: 120px;
+        height: 120px;
     }
 }
 
@@ -460,10 +450,7 @@ a:hover {
 
 <div class="signup-card">
 
-    <div class="logo">
-        <span class="logo-icon">🍴</span>
-        <span>Chekananke</span>
-    </div>
+    <div class="logo">🍴 Chekananke</div>
 
     <p class="subtitle">Business Portal</p>
 
@@ -515,20 +502,26 @@ a:hover {
             required
         >
 
-        <label for="profile_picture">Profile Picture</label>
+        <label for="profile_picture">Customer Profile Picture</label>
 
         <input
             type="file"
             id="profile_picture"
             name="profile_picture"
-            accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+            accept="image/*"
             required
         >
 
         <p class="hint">
-            Accepted formats: JPG, JPEG, PNG, and WEBP.
-            Maximum size: 2 MB.
+            Select a photo from your cellphone gallery, take a new
+            picture using your camera, or upload from your computer.
+            Supported formats: JPG, PNG, and WEBP. Maximum size: 2 MB.
         </p>
+
+        <div class="preview-container" id="previewContainer">
+            <img id="picturePreview" src="" alt="Profile picture preview">
+            <p class="preview-text">Profile picture selected!</p>
+        </div>
 
         <label for="password">Password</label>
 
@@ -573,6 +566,49 @@ a:hover {
     </p>
 
 </div>
+
+<script>
+
+const pictureInput = document.getElementById("profile_picture");
+const previewContainer = document.getElementById("previewContainer");
+const picturePreview = document.getElementById("picturePreview");
+
+let currentPreviewUrl = null;
+
+pictureInput.addEventListener("change", function () {
+
+    const file = this.files[0];
+
+    if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+        currentPreviewUrl = null;
+    }
+
+    previewContainer.style.display = "none";
+    picturePreview.src = "";
+
+    if (!file) {
+        return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+        alert("Please select an image file.");
+        this.value = "";
+        return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+        alert("Your picture must be 2 MB or smaller.");
+        this.value = "";
+        return;
+    }
+
+    currentPreviewUrl = URL.createObjectURL(file);
+    picturePreview.src = currentPreviewUrl;
+    previewContainer.style.display = "block";
+});
+
+</script>
 
 </body>
 </html>
