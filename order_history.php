@@ -34,12 +34,10 @@ if (
     $_SERVER["REQUEST_METHOD"] === "POST" &&
     isset($_POST["cancel_order"])
 ) {
-
     $token = $_POST["csrf_token"] ?? "";
 
     // Verify CSRF token.
     if (!hash_equals($_SESSION["csrf_token"], $token)) {
-
         $_SESSION["order_message"] =
             "Invalid request. Please try again.";
 
@@ -56,7 +54,6 @@ if (
     );
 
     if (!$order_id || $order_id < 1) {
-
         $_SESSION["order_message"] = "Invalid order ID.";
         $_SESSION["message_type"] = "error";
 
@@ -82,14 +79,11 @@ if (
     $cancel_stmt->execute();
 
     if ($cancel_stmt->affected_rows > 0) {
-
         $_SESSION["order_message"] =
             "Your order has been successfully cancelled.";
 
         $_SESSION["message_type"] = "success";
-
     } else {
-
         $_SESSION["order_message"] =
             "Unable to cancel this order. Only Pending orders can be cancelled.";
 
@@ -171,6 +165,8 @@ $result = $stmt->get_result();
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
             box-shadow: 0 2px 15px #0001;
         }
 
@@ -178,6 +174,13 @@ $result = $stmt->get_result();
             font-size: 24px;
             font-weight: 800;
             color: #f97316;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         .back {
@@ -191,6 +194,21 @@ $result = $stmt->get_result();
 
         .back:hover {
             background: #374151;
+        }
+
+        /* CONTACT SUPPORT BUTTON */
+
+        .support-link {
+            background: #f97316;
+            color: white;
+            padding: 10px 16px;
+            border-radius: 9px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .support-link:hover {
+            background: #ea580c;
         }
 
         /* MAIN */
@@ -383,6 +401,25 @@ $result = $stmt->get_result();
                 font-size: 20px;
             }
 
+            .header-actions {
+                width: 100%;
+            }
+
+            .header-actions a {
+                text-align: center;
+                flex: 1;
+                padding: 10px 8px;
+                font-size: 13px;
+            }
+
+            .container {
+                padding: 30px 12px;
+            }
+
+            .table-container {
+                padding: 12px;
+            }
+
         }
 
     </style>
@@ -399,9 +436,17 @@ $result = $stmt->get_result();
             🍽 Chekananke
         </div>
 
-        <a href="index.php" class="back">
-            Back to Home
-        </a>
+        <div class="header-actions">
+
+            <a href="contact_support.php" class="support-link">
+                💬 Contact Support
+            </a>
+
+            <a href="index.php" class="back">
+                Back to Home
+            </a>
+
+        </div>
 
     </header>
 
