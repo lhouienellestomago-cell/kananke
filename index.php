@@ -14,7 +14,10 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $user_id = (int)($_SESSION["user_id"] ?? 0);
 $unread_replies = 0;
 
-// Count unread admin replies
+// =====================================
+// COUNT UNREAD ADMIN REPLIES
+// =====================================
+
 if ($user_id > 0) {
     $stmt = $conn->prepare(
         "SELECT COUNT(*) AS unread_count
@@ -120,33 +123,51 @@ nav a:hover {
     color: #f97316;
 }
 
-.support-link {
-    background: #f97316;
-    color: white !important;
-    padding: 10px 13px;
-    border-radius: 9px;
+/* =====================================
+   CONTACT SUPPORT CHAT ICON
+===================================== */
+
+nav a.support-icon {
+    position: relative;
+    width: 43px;
+    height: 43px;
+    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 7px;
+    background: #f97316;
+    color: white !important;
+    border-radius: 50%;
+    font-size: 23px;
+    flex-shrink: 0;
+    transition: 0.2s;
 }
 
-.support-link:hover {
+nav a.support-icon:hover {
     background: #ea580c;
+    color: white !important;
+    transform: scale(1.06);
 }
+
+/* Unread notification badge */
 
 .notification-count {
-    background: #dc2626;
-    color: white;
+    position: absolute;
+    top: -6px;
+    right: -7px;
     min-width: 20px;
     height: 20px;
     padding: 0 5px;
+    background: #dc2626;
+    color: white;
+    border: 2px solid white;
     border-radius: 50px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: bold;
+    line-height: 1;
 }
 
 .logout {
@@ -404,8 +425,11 @@ footer {
         border-radius: 7px;
     }
 
-    .support-link {
-        padding: 9px 10px;
+    nav a.support-icon {
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        font-size: 22px;
     }
 
     .notification-count {
@@ -539,6 +563,13 @@ footer {
         padding: 8px 7px;
     }
 
+    nav a.support-icon {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        font-size: 21px;
+    }
+
     .hero-content h1 {
         font-size: 27px;
     }
@@ -580,9 +611,15 @@ footer {
             Order History
         </a>
 
-        <a href="contact_support.php" class="support-link">
+        <!-- CONTACT SUPPORT ICON -->
 
-            Contact Support
+        <a
+            href="contact_support.php"
+            class="support-icon"
+            title="Contact Support"
+            aria-label="Contact Support"
+        >
+            💬
 
             <?php if ($unread_replies > 0): ?>
 
@@ -617,9 +654,7 @@ footer {
 
     </div>
 
-    <!-- =====================================
-         HERO SECTION
-    ====================================== -->
+    <!-- HERO SECTION -->
 
     <section class="hero">
 
@@ -655,17 +690,13 @@ footer {
 
     </section>
 
-    <!-- =====================================
-         PRODUCTS SECTION
-    ====================================== -->
+    <!-- PRODUCTS SECTION -->
 
     <h2 class="section-title" id="products">
         Our Products
     </h2>
 
     <section class="products">
-
-        <!-- FOOD BY TRAY -->
 
         <div class="card">
 
@@ -683,8 +714,6 @@ footer {
 
         </div>
 
-        <!-- FOOD BUNDLE -->
-
         <div class="card">
 
             <div class="emoji">🍱</div>
@@ -700,8 +729,6 @@ footer {
             </a>
 
         </div>
-
-        <!-- ADDITIONALS -->
 
         <div class="card">
 
@@ -721,9 +748,7 @@ footer {
 
     </section>
 
-    <!-- =====================================
-         ABOUT SECTION
-    ====================================== -->
+    <!-- ABOUT SECTION -->
 
     <h2 class="section-title" id="about">
         About Us
@@ -739,9 +764,7 @@ footer {
 
 </main>
 
-<!-- =====================================
-     FOOTER
-===================================== -->
+<!-- FOOTER -->
 
 <footer>
 
