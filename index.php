@@ -362,7 +362,7 @@ footer {
         <a href="order_history.php">Order History</a>
 
         <a href="contact_support.php" class="support-link">
-            💬 Contact Support
+            💬
 
             <?php if ($unreadCount > 0): ?>
                 <span class="notification-badge">
