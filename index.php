@@ -14,7 +14,7 @@ if ($user_id <= 0) {
     die("User session not found. Please log in again.");
 }
 
-// Count unread admin replies for this customer.
+// Count unread admin replies.
 $unreadStmt = $conn->prepare(
     "SELECT COUNT(*) AS unread_count
      FROM support_replies r
@@ -44,6 +44,7 @@ $unreadStmt->close();
 <title>Kananke Food Hauz</title>
 
 <style>
+
 * {
     box-sizing: border-box;
     margin: 0;
@@ -100,31 +101,22 @@ nav a:hover {
     color: #f97316;
 }
 
-/* =====================================
-   CIRCULAR CONTACT SUPPORT BUTTON
-===================================== */
+/* CIRCULAR CONTACT SUPPORT BUTTON */
 
 .support-link {
     background: #f97316;
     color: white !important;
-
     width: 50px;
     height: 50px;
-
     padding: 0;
     border-radius: 50%;
-
     display: inline-flex;
     align-items: center;
     justify-content: center;
-
     position: relative;
     flex-shrink: 0;
-
     font-size: 19px;
-    text-decoration: none;
-
-    transition: background 0.2s, transform 0.2s;
+    transition: 0.2s;
 }
 
 .support-link:hover {
@@ -132,31 +124,24 @@ nav a:hover {
     transform: scale(1.05);
 }
 
-/* RED NOTIFICATION NUMBER */
+/* NOTIFICATION BADGE */
 
 .notification-badge {
     position: absolute;
     top: -6px;
     right: -6px;
-
     min-width: 20px;
     height: 20px;
-
     padding: 0 5px;
     border-radius: 50px;
-
     background: #dc2626;
     color: white;
-
     font-size: 11px;
     font-weight: bold;
-
     display: inline-flex;
     align-items: center;
     justify-content: center;
-
     border: 2px solid white;
-    line-height: 1;
 }
 
 .logout {
@@ -207,12 +192,10 @@ main {
 
 .hero-box {
     background: transparent;
-    border-radius: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 250px;
-    overflow: visible;
 }
 
 .hero-box img {
@@ -221,10 +204,6 @@ main {
     height: auto;
     max-height: 300px;
     object-fit: contain;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
 }
 
 .btn {
@@ -290,10 +269,64 @@ main {
     background: #ea580c;
 }
 
+/* ABOUT US */
+
 .about-card {
     text-align: center;
     line-height: 1.6;
     color: #667085;
+    padding: 30px 20px;
+}
+
+/* FACEBOOK BUTTON */
+
+.facebook-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 22px;
+}
+
+.facebook-button {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: #1877F2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    text-decoration: none;
+    box-shadow: 0 5px 15px #1877F244;
+    transition: 0.25s;
+}
+
+.facebook-button:hover {
+    background: #0866FF;
+    transform: scale(1.1);
+    box-shadow: 0 7px 20px #1877F266;
+}
+
+.facebook-button span {
+    font-family: Arial, sans-serif;
+    font-size: 43px;
+    font-weight: bold;
+    line-height: 1;
+    color: white;
+    margin-top: 10px;
+}
+
+.facebook-text {
+    color: #1877F2;
+    font-size: 14px;
+    font-weight: bold;
+    text-decoration: none;
+}
+
+.facebook-text:hover {
+    text-decoration: underline;
 }
 
 .user-info {
@@ -312,6 +345,7 @@ footer {
 /* TABLET */
 
 @media(max-width:900px) {
+
     header {
         flex-wrap: wrap;
     }
@@ -327,11 +361,13 @@ footer {
     .products {
         grid-template-columns: repeat(2, 1fr);
     }
+
 }
 
 /* MOBILE */
 
 @media(max-width:600px) {
+
     header {
         padding: 15px 4%;
         align-items: flex-start;
@@ -344,24 +380,16 @@ footer {
     nav {
         width: 100%;
         gap: 10px;
-        align-items: center;
     }
 
     nav a {
         font-size: 13px;
     }
 
-    /* Smaller circular support button on mobile */
     .support-link {
         width: 44px;
         height: 44px;
         padding: 0;
-        font-size: 17px;
-    }
-
-    .notification-badge {
-        top: -6px;
-        right: -6px;
     }
 
     main {
@@ -388,7 +416,9 @@ footer {
     .products {
         grid-template-columns: 1fr;
     }
+
 }
+
 </style>
 </head>
 
@@ -399,13 +429,17 @@ footer {
     <div class="brand">🍽 Chekananke</div>
 
     <nav>
+
         <a href="#home">Home</a>
         <a href="#products">Products</a>
         <a href="#about">About</a>
 
         <a href="order_history.php">Order History</a>
 
-        <a href="contact_support.php" class="support-link" title="Contact Support" aria-label="Contact Support">
+        <a href="contact_support.php"
+           class="support-link"
+           title="Contact Support"
+           aria-label="Contact Support">
 
             💬
 
@@ -418,6 +452,7 @@ footer {
         </a>
 
         <a href="logout.php" class="logout">Log Out</a>
+
     </nav>
 
 </header>
@@ -434,6 +469,7 @@ footer {
     <section class="hero">
 
         <div>
+
             <h1>
                 Good Food.
                 <br>
@@ -448,10 +484,14 @@ footer {
             </p>
 
             <a href="#products" class="btn">View Products</a>
+
         </div>
 
         <div class="hero-box">
-            <img src="kanankelogo.png" alt="KANANKE'S FOOD HAUZ Logo">
+
+            <img src="kanankelogo.png"
+                 alt="KANANKE'S FOOD HAUZ Logo">
+
         </div>
 
     </section>
@@ -486,7 +526,35 @@ footer {
     <h2 class="section-title" id="about">About Us</h2>
 
     <section class="card about-card">
+
         <p>NOT DONE YET!</p>
+
+        <!-- FACEBOOK PROFILE BUTTON -->
+
+        <div class="facebook-container">
+
+            <a
+                href="https://www.facebook.com/cherry.estomago"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="facebook-button"
+                aria-label="Visit our Facebook profile"
+                title="Visit our Facebook profile"
+            >
+                <span>f</span>
+            </a>
+
+            <a
+                href="https://www.facebook.com/cherry.estomago"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="facebook-text"
+            >
+                Visit Our Facebook Page
+            </a>
+
+        </div>
+
     </section>
 
 </main>
