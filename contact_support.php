@@ -9,7 +9,6 @@ if (!isset($_SESSION["loggedIn"]) || $_SESSION["loggedIn"] !== true) {
 
 require_once "db.php";
 
-// Keep MySQL timestamp handling consistent in UTC.
 $conn->query("SET time_zone = '+00:00'");
 
 $user_id = (int)($_SESSION["user_id"] ?? 0);
@@ -18,7 +17,28 @@ if ($user_id <= 0) {
     die("User session not found. Please log in again.");
 }
 
-// Convert UTC database timestamps to Philippine time.
+// =====================================
+// MARK ADMIN REPLIES AS READ
+// =====================================
+
+$markRead = $conn->prepare(
+    "UPDATE support_replies r
+     INNER JOIN support_messages s
+        ON s.id = r.support_id
+     SET r.read_at = UTC_TIMESTAMP()
+     WHERE s.user_id = ?
+       AND r.sender_role = 'admin'
+       AND r.read_at IS NULL"
+);
+
+$markRead->bind_param("i", $user_id);
+$markRead->execute();
+$markRead->close();
+
+// =====================================
+// PHILIPPINE TIME FORMAT
+// =====================================
+
 function formatPhilippineTime($timestamp) {
     if (empty($timestamp)) {
         return "";
@@ -35,9 +55,17 @@ function formatPhilippineTime($timestamp) {
             ->format("M d, Y h:i A");
 
     } catch (Exception $e) {
-        return htmlspecialchars($timestamp, ENT_QUOTES, "UTF-8");
+        return htmlspecialchars(
+            $timestamp,
+            ENT_QUOTES,
+            "UTF-8"
+        );
     }
 }
+
+// =====================================
+// CSRF TOKEN
+// =====================================
 
 if (empty($_SESSION["csrf_token"])) {
     $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
@@ -46,6 +74,7 @@ if (empty($_SESSION["csrf_token"])) {
 function customerSupportRedirect($message, $type = "success") {
     $_SESSION["support_message"] = $message;
     $_SESSION["support_message_type"] = $type;
+
     header("Location: contact_support.php");
     exit;
 }
@@ -71,7 +100,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $action = $_POST["action"] ?? "";
     $message = trim($_POST["message"] ?? "");
 
-    if ($message === "" || strlen($message) > 5000) {
+    if (
+        $message === "" ||
+        strlen($message) > 5000
+    ) {
         customerSupportRedirect(
             "Please enter a message of up to 5000 characters.",
             "error"
@@ -90,56 +122,101 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         );
 
         if (!$support_id || $support_id < 1) {
-            customerSupportRedirect("Invalid conversation.", "error");
+            customerSupportRedirect(
+                "Invalid conversation.",
+                "error"
+            );
         }
 
-        // Verify ownership and conversation status.
         $check = $conn->prepare(
             "SELECT status
              FROM support_messages
              WHERE id = ? AND user_id = ?"
         );
 
-        $check->bind_param("ii", $support_id, $user_id);
+        $check->bind_param(
+            "ii",
+            $support_id,
+            $user_id
+        );
+
         $check->execute();
 
-        $conversation = $check->get_result()->fetch_assoc();
+        $conversation = $check
+            ->get_result()
+            ->fetch_assoc();
+
         $check->close();
 
         if (!$conversation) {
-            customerSupportRedirect("Conversation not found.", "error");
+            customerSupportRedirect(
+                "Conversation not found.",
+                "error"
+            );
         }
 
-        if (strtolower(trim($conversation["status"])) === "resolved") {
+        if (
+            strtolower(trim($conversation["status"])) === "resolved"
+        ) {
             customerSupportRedirect(
                 "This conversation has been resolved. Replies are disabled.",
                 "error"
             );
         }
 
-        // Save customer reply.
-        $insert = $conn->prepare(
-            "INSERT INTO support_replies
-             (support_id, sender_role, reply_message)
-             VALUES (?, 'customer', ?)"
+        $conn->begin_transaction();
+
+        try {
+
+            // Save the customer's reply in the conversation history.
+            $insert = $conn->prepare(
+                "INSERT INTO support_replies
+                 (support_id, sender_role, reply_message)
+                 VALUES (?, 'customer', ?)"
+            );
+
+            $insert->bind_param(
+                "is",
+                $support_id,
+                $message
+            );
+
+            $insert->execute();
+            $insert->close();
+
+            // Reopen the conversation for the admin.
+            $update = $conn->prepare(
+                "UPDATE support_messages
+                 SET status = 'Open'
+                 WHERE id = ? AND user_id = ?"
+            );
+
+            $update->bind_param(
+                "ii",
+                $support_id,
+                $user_id
+            );
+
+            $update->execute();
+            $update->close();
+
+            $conn->commit();
+
+        } catch (Throwable $e) {
+
+            $conn->rollback();
+
+            error_log("Customer support reply error: " . $e->getMessage());
+
+            customerSupportRedirect(
+                "Unable to send your reply. Please try again.",
+                "error"
+            );
+        }
+
+        customerSupportRedirect(
+            "Your reply has been sent."
         );
-
-        $insert->bind_param("is", $support_id, $message);
-        $insert->execute();
-        $insert->close();
-
-        // Mark conversation as Open.
-        $update = $conn->prepare(
-            "UPDATE support_messages
-             SET status = 'Open'
-             WHERE id = ? AND user_id = ?"
-        );
-
-        $update->bind_param("ii", $support_id, $user_id);
-        $update->execute();
-        $update->close();
-
-        customerSupportRedirect("Your reply has been sent.");
     }
 
     // =================================
@@ -151,7 +228,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $order_input = trim($_POST["order_id"] ?? "");
         $order_id = null;
 
-        if ($order_input !== "" && strtolower($order_input) !== "other") {
+        if (
+            $order_input !== "" &&
+            strtolower($order_input) !== "other"
+        ) {
 
             $order_id = filter_var(
                 $order_input,
@@ -159,7 +239,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             );
 
             if (!$order_id || $order_id < 1) {
-                customerSupportRedirect("Invalid order selected.", "error");
+                customerSupportRedirect(
+                    "Invalid order selected.",
+                    "error"
+                );
             }
 
             $check = $conn->prepare(
@@ -168,10 +251,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                  WHERE id = ? AND user_id = ?"
             );
 
-            $check->bind_param("ii", $order_id, $user_id);
+            $check->bind_param(
+                "ii",
+                $order_id,
+                $user_id
+            );
+
             $check->execute();
 
             $valid = $check->get_result()->num_rows > 0;
+
             $check->close();
 
             if (!$valid) {
@@ -190,7 +279,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                  VALUES (?, NULL, ?, 'Open')"
             );
 
-            $insert->bind_param("is", $user_id, $message);
+            $insert->bind_param(
+                "is",
+                $user_id,
+                $message
+            );
 
         } else {
 
@@ -200,16 +293,26 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                  VALUES (?, ?, ?, 'Open')"
             );
 
-            $insert->bind_param("iis", $user_id, $order_id, $message);
+            $insert->bind_param(
+                "iis",
+                $user_id,
+                $order_id,
+                $message
+            );
         }
 
         $insert->execute();
         $insert->close();
 
-        customerSupportRedirect("Your support message has been sent.");
+        customerSupportRedirect(
+            "Your support message has been sent."
+        );
     }
 
-    customerSupportRedirect("Invalid action.", "error");
+    customerSupportRedirect(
+        "Invalid action.",
+        "error"
+    );
 }
 
 // =====================================
@@ -307,6 +410,10 @@ header {
     font-weight: bold;
 }
 
+.back-btn:hover {
+    background: #374151;
+}
+
 .container {
     max-width: 950px;
     margin: auto;
@@ -372,9 +479,17 @@ button {
     color: white;
 }
 
+.send-btn:hover {
+    background: #ea580c;
+}
+
 .reply-btn {
     background: #2563eb;
     color: white;
+}
+
+.reply-btn:hover {
+    background: #1d4ed8;
 }
 
 .notification {
@@ -510,6 +625,10 @@ button {
     .card {
         padding: 18px;
     }
+
+    .conversation {
+        padding: 14px;
+    }
 }
 </style>
 </head>
@@ -524,14 +643,17 @@ button {
 <main class="container">
 
     <h1>Contact Support</h1>
+
     <p class="subtitle">
         Send us a message and chat with our support team.
     </p>
 
     <?php if ($notice !== ""): ?>
+
         <div class="notification <?php echo htmlspecialchars($notice_type, ENT_QUOTES, "UTF-8"); ?>">
             <?php echo htmlspecialchars($notice, ENT_QUOTES, "UTF-8"); ?>
         </div>
+
     <?php endif; ?>
 
     <section class="card">
@@ -551,14 +673,17 @@ button {
             <label for="order_id">Select Order (Optional)</label>
 
             <select name="order_id" id="order_id">
+
                 <option value="">General Concern / No Order</option>
                 <option value="other">Other</option>
 
                 <?php while ($order = $orders->fetch_assoc()): ?>
+
                     <option value="<?php echo (int)$order["id"]; ?>">
                         Order #<?php echo (int)$order["id"]; ?> -
                         <?php echo htmlspecialchars($order["product_name"], ENT_QUOTES, "UTF-8"); ?>
                     </option>
+
                 <?php endwhile; ?>
 
             </select>
@@ -647,7 +772,11 @@ button {
 
                         <?php
                         echo nl2br(
-                            htmlspecialchars($conversation["message"], ENT_QUOTES, "UTF-8")
+                            htmlspecialchars(
+                                $conversation["message"],
+                                ENT_QUOTES,
+                                "UTF-8"
+                            )
                         );
                         ?>
 
@@ -671,7 +800,11 @@ button {
 
                             <?php
                             echo nl2br(
-                                htmlspecialchars($reply["reply_message"], ENT_QUOTES, "UTF-8")
+                                htmlspecialchars(
+                                    $reply["reply_message"],
+                                    ENT_QUOTES,
+                                    "UTF-8"
+                                )
                             );
                             ?>
 
@@ -695,7 +828,11 @@ button {
                                 value="<?php echo htmlspecialchars($_SESSION["csrf_token"], ENT_QUOTES, "UTF-8"); ?>"
                             >
 
-                            <input type="hidden" name="action" value="reply">
+                            <input
+                                type="hidden"
+                                name="action"
+                                value="reply"
+                            >
 
                             <input
                                 type="hidden"
