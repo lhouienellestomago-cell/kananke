@@ -1,5 +1,4 @@
 <?php
-date_default_timezone_set("Asia/Manila");
 session_start();
 
 if (!isset($_SESSION["loggedIn"]) || $_SESSION["loggedIn"] !== true) {
@@ -9,92 +8,71 @@ if (!isset($_SESSION["loggedIn"]) || $_SESSION["loggedIn"] !== true) {
 
 require_once "db.php";
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-
 $user_id = (int)($_SESSION["user_id"] ?? 0);
-$unread_replies = 0;
 
-// =====================================
-// COUNT UNREAD ADMIN REPLIES
-// =====================================
-
-if ($user_id > 0) {
-    $stmt = $conn->prepare(
-        "SELECT COUNT(*) AS unread_count
-         FROM support_replies r
-         INNER JOIN support_messages s
-            ON s.id = r.support_id
-         WHERE s.user_id = ?
-           AND r.sender_role = 'admin'
-           AND r.read_at IS NULL"
-    );
-
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-
-    $result = $stmt->get_result()->fetch_assoc();
-    $unread_replies = (int)($result["unread_count"] ?? 0);
-
-    $stmt->close();
+if ($user_id <= 0) {
+    die("User session not found. Please log in again.");
 }
 
-$conn->close();
+// Count unread admin replies for this customer.
+$unreadStmt = $conn->prepare(
+    "SELECT COUNT(*) AS unread_count
+     FROM support_replies r
+     INNER JOIN support_messages s ON s.id = r.support_id
+     WHERE s.user_id = ?
+       AND r.sender_role = 'admin'
+       AND r.read_at IS NULL"
+);
+
+$unreadStmt->bind_param("i", $user_id);
+$unreadStmt->execute();
+
+$unreadCount = (int)$unreadStmt
+    ->get_result()
+    ->fetch_assoc()["unread_count"];
+
+$unreadStmt->close();
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
-
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>Kananke Food Hauz</title>
 
 <style>
-
-/* =====================================
-   GENERAL
-===================================== */
-
 * {
+    box-sizing: border-box;
     margin: 0;
     padding: 0;
-    box-sizing: border-box;
-}
-
-html {
-    scroll-behavior: smooth;
+    font-family: Arial, sans-serif;
 }
 
 body {
-    font-family: Arial, Helvetica, sans-serif;
+    min-height: 100vh;
     background: linear-gradient(135deg, #fff7ed, #dcfce7);
     color: #172018;
-    min-height: 100vh;
-    overflow-x: hidden;
 }
 
-a {
-    text-decoration: none;
+button {
+    cursor: pointer;
+    border: 0;
 }
-
-/* =====================================
-   HEADER
-===================================== */
 
 header {
-    width: 100%;
-    background: white;
-    padding: 15px 6%;
+    background: #fff;
+    padding: 16px 6%;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 20px;
-    box-shadow: 0 2px 15px rgba(0,0,0,0.08);
+    gap: 15px;
+    box-shadow: 0 2px 15px #0001;
     position: sticky;
     top: 0;
-    z-index: 1000;
+    z-index: 5;
 }
 
 .brand {
@@ -106,560 +84,310 @@ header {
 
 nav {
     display: flex;
+    gap: 22px;
     align-items: center;
-    justify-content: center;
     flex-wrap: wrap;
-    gap: 18px;
 }
 
 nav a {
     color: #344054;
-    font-size: 14px;
+    text-decoration: none;
     font-weight: 600;
-    transition: 0.2s;
+    position: relative;
 }
 
 nav a:hover {
     color: #f97316;
 }
 
-/* =====================================
-   CONTACT SUPPORT CHAT ICON
-===================================== */
-
-nav a.support-icon {
-    position: relative;
-    width: 43px;
-    height: 43px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+.support-link {
     background: #f97316;
     color: white !important;
-    border-radius: 50%;
-    font-size: 23px;
-    flex-shrink: 0;
-    transition: 0.2s;
+    padding: 10px 14px;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
 }
 
-nav a.support-icon:hover {
+.support-link:hover {
     background: #ea580c;
-    color: white !important;
-    transform: scale(1.06);
 }
 
-/* Unread notification badge */
-
-.notification-count {
-    position: absolute;
-    top: -6px;
-    right: -7px;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 5px;
-    background: #dc2626;
-    color: white;
-    border: 2px solid white;
-    border-radius: 50px;
+.notification-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 50px;
+    background: #dc2626;
+    color: white;
+    font-size: 11px;
     font-weight: bold;
     line-height: 1;
 }
 
 .logout {
     background: #111827;
-    color: white !important;
-    padding: 10px 14px;
+    color: #fff;
+    padding: 9px 16px;
     border-radius: 9px;
+    text-decoration: none;
+    font-weight: 600;
 }
 
 .logout:hover {
     background: #374151;
 }
 
-/* =====================================
-   MAIN CONTENT
-===================================== */
-
 main {
-    width: 100%;
-    max-width: 1150px;
+    max-width: 1100px;
     margin: auto;
-    padding: 45px 20px;
+    padding: 50px 20px;
 }
-
-.user-info {
-    text-align: center;
-    margin-bottom: 20px;
-    color: #475467;
-    font-size: 14px;
-    overflow-wrap: anywhere;
-}
-
-/* =====================================
-   HERO
-===================================== */
 
 .hero {
-    background: white;
-    border-radius: 22px;
-    padding: 45px;
+    background: #fff;
+    border-radius: 24px;
+    padding: 55px 45px;
     display: grid;
-    grid-template-columns: 1.2fr 0.8fr;
-    align-items: center;
+    grid-template-columns: 1.3fr .7fr;
     gap: 30px;
-    box-shadow: 0 10px 35px rgba(0,0,0,0.08);
+    box-shadow: 0 10px 35px #0001;
 }
 
-.hero-content h1 {
+.hero h1 {
     font-size: 46px;
-    line-height: 1.15;
+    line-height: 1.1;
     margin-bottom: 18px;
 }
 
-.hero-content h1 span {
+.hero h1 span {
     color: #f97316;
 }
 
-.hero-content p {
-    font-size: 17px;
+.hero p {
+    font-size: 18px;
     color: #667085;
-    line-height: 1.7;
+    line-height: 1.6;
     margin-bottom: 20px;
 }
 
 .hero-box {
-    width: 100%;
-    min-width: 0;
+    background: transparent;
+    border-radius: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    min-height: 250px;
+    overflow: visible;
 }
 
 .hero-box img {
     display: block;
     width: 100%;
-    max-width: 330px;
+    height: auto;
     max-height: 300px;
     object-fit: contain;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 44px;
-    padding: 12px 22px;
-    border-radius: 9px;
+    display: inline-block;
+    padding: 13px 24px;
+    border-radius: 10px;
     background: #f97316;
     color: white;
-    font-size: 15px;
-    font-weight: bold;
-    transition: 0.2s;
+    font-weight: 700;
+    text-decoration: none;
+    margin-top: 10px;
 }
 
 .btn:hover {
     background: #ea580c;
 }
 
-/* =====================================
-   SECTION TITLES
-===================================== */
-
 .section-title {
     text-align: center;
     margin: 55px 0 25px;
     font-size: 30px;
-    color: #172018;
 }
-
-/* =====================================
-   PRODUCTS
-===================================== */
 
 .products {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 22px;
-    width: 100%;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
 }
 
 .card {
-    background: white;
+    background: #fff;
     padding: 25px;
-    border-radius: 17px;
-    box-shadow: 0 8px 25px rgba(0,0,0,0.07);
-    min-width: 0;
+    border-radius: 18px;
+    box-shadow: 0 8px 25px #0001;
 }
 
 .card .emoji {
-    font-size: 42px;
-    margin-bottom: 12px;
+    font-size: 45px;
 }
 
 .card h3 {
-    font-size: 19px;
-    margin-bottom: 8px;
-    color: #172018;
+    margin: 12px 0 7px;
 }
 
 .card p {
-    font-size: 14px;
     color: #667085;
     line-height: 1.5;
-    margin-bottom: 12px;
 }
 
 .price {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 42px;
-    padding: 10px 17px;
-    border-radius: 8px;
-    background: #f97316;
+    display: inline-block;
     color: white;
-    font-size: 14px;
-    font-weight: bold;
-    transition: 0.2s;
+    background: #f97316;
+    font-weight: 800;
+    font-size: 16px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    margin-top: 5px;
+    text-decoration: none;
 }
 
 .price:hover {
     background: #ea580c;
 }
 
-/* =====================================
-   ABOUT
-===================================== */
-
 .about-card {
     text-align: center;
-    line-height: 1.7;
+    line-height: 1.6;
     color: #667085;
 }
 
-/* =====================================
-   FOOTER
-===================================== */
+.user-info {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #667085;
+    font-size: 14px;
+}
 
 footer {
     text-align: center;
-    padding: 28px 15px;
+    padding: 30px;
     color: #667085;
-    font-size: 13px;
 }
 
-/* =====================================
-   TABLET
-===================================== */
-
-@media screen and (max-width: 900px) {
-
+@media(max-width:900px) {
     header {
-        padding: 15px 3%;
-        flex-direction: column;
-        gap: 13px;
-    }
-
-    nav {
-        width: 100%;
-        gap: 12px;
-    }
-
-    .hero {
-        padding: 30px;
-    }
-
-    .hero-content h1 {
-        font-size: 38px;
-    }
-
-    .products {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-/* =====================================
-   MOBILE PHONES
-===================================== */
-
-@media screen and (max-width: 600px) {
-
-    body {
-        width: 100%;
-        overflow-x: hidden;
-    }
-
-    header {
-        position: relative;
-        width: 100%;
-        padding: 12px 10px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .brand {
-        width: 100%;
-        text-align: center;
-        font-size: 22px;
-    }
-
-    nav {
-        width: 100%;
-        display: flex;
         flex-wrap: wrap;
-        justify-content: center;
-        align-items: center;
-        gap: 7px;
     }
 
-    nav a {
-        font-size: 12px;
-        padding: 9px 8px;
-        border-radius: 7px;
-    }
-
-    nav a.support-icon {
-        width: 42px;
-        height: 42px;
-        padding: 0;
-        font-size: 22px;
-    }
-
-    .notification-count {
-        min-width: 19px;
-        height: 19px;
-        font-size: 10px;
-    }
-
-    main {
-        width: 100%;
-        padding: 22px 12px;
-        margin: 0 auto;
-    }
-
-    .user-info {
-        font-size: 13px;
-        margin-bottom: 16px;
+    nav {
+        gap: 12px;
     }
 
     .hero {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        padding: 25px 17px;
-        gap: 20px;
-        text-align: center;
-        border-radius: 17px;
-    }
-
-    .hero-content {
-        width: 100%;
-    }
-
-    .hero-content h1 {
-        font-size: 31px;
-        line-height: 1.2;
-        margin-bottom: 13px;
-    }
-
-    .hero-content p {
-        font-size: 14px;
-        line-height: 1.6;
-        margin-bottom: 16px;
-    }
-
-    .hero-box {
-        width: 100%;
-        min-height: 130px;
-    }
-
-    .hero-box img {
-        width: 100%;
-        max-width: 230px;
-        max-height: 170px;
-        object-fit: contain;
-    }
-
-    .btn {
-        width: 100%;
-        max-width: 220px;
-        min-height: 44px;
-        font-size: 14px;
-    }
-
-    .section-title {
-        font-size: 24px;
-        margin: 32px 0 18px;
+        grid-template-columns: 1fr;
     }
 
     .products {
-        width: 100%;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 13px;
-    }
-
-    .card {
-        width: 100%;
-        padding: 18px;
-        border-radius: 14px;
-    }
-
-    .card .emoji {
-        font-size: 35px;
-        margin-bottom: 8px;
-    }
-
-    .card h3 {
-        font-size: 17px;
-        margin-bottom: 6px;
-    }
-
-    .card p {
-        font-size: 13px;
-        margin-bottom: 10px;
-    }
-
-    .price {
-        min-height: 40px;
-        padding: 10px 17px;
-        font-size: 13px;
-    }
-
-    .about-card {
-        padding: 20px 15px;
-        font-size: 14px;
-    }
-
-    footer {
-        padding: 22px 12px;
-        font-size: 12px;
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 
-/* =====================================
-   VERY SMALL PHONES
-===================================== */
-
-@media screen and (max-width: 360px) {
+@media(max-width:600px) {
+    header {
+        padding: 15px 4%;
+        align-items: flex-start;
+    }
 
     .brand {
         font-size: 20px;
     }
 
     nav {
-        gap: 5px;
+        width: 100%;
+        gap: 10px;
     }
 
     nav a {
-        font-size: 11px;
-        padding: 8px 7px;
+        font-size: 13px;
     }
 
-    nav a.support-icon {
-        width: 40px;
-        height: 40px;
-        padding: 0;
-        font-size: 21px;
+    .support-link {
+        padding: 9px 10px;
     }
 
-    .hero-content h1 {
-        font-size: 27px;
+    main {
+        padding: 30px 12px;
     }
 
-    .section-title {
-        font-size: 22px;
+    .hero {
+        padding: 30px 22px;
     }
 
-    .card {
-        padding: 16px;
+    .hero h1 {
+        font-size: 36px;
+    }
+
+    .hero p {
+        font-size: 16px;
+    }
+
+    .hero-box {
+        height: 180px;
+        min-height: 180px;
+    }
+
+    .products {
+        grid-template-columns: 1fr;
     }
 }
-
 </style>
-
 </head>
 
 <body>
 
-<!-- =====================================
-     HEADER / NAVIGATION
-===================================== -->
-
 <header>
 
-    <div class="brand">
-        🍽 Kananke Food Hauz
-    </div>
+    <div class="brand">🍽 Chekananke</div>
 
     <nav>
-
         <a href="#home">Home</a>
-
         <a href="#products">Products</a>
-
         <a href="#about">About</a>
 
-        <a href="order_history.php">
-            Order History
-        </a>
+        <a href="order_history.php">Order History</a>
 
-        <!-- CONTACT SUPPORT ICON -->
+        <a href="contact_support.php" class="support-link">
+            💬 Contact Support
 
-        <a
-            href="contact_support.php"
-            class="support-icon"
-            title="Contact Support"
-            aria-label="Contact Support"
-        >
-            💬
-
-            <?php if ($unread_replies > 0): ?>
-
-                <span class="notification-count">
-                    <?= $unread_replies > 99 ? "99+" : $unread_replies ?>
+            <?php if ($unreadCount > 0): ?>
+                <span class="notification-badge">
+                    <?php echo $unreadCount > 99 ? "99+" : $unreadCount; ?>
                 </span>
-
             <?php endif; ?>
-
         </a>
 
-        <a href="logout.php" class="logout">
-            Log Out
-        </a>
-
+        <a href="logout.php" class="logout">Log Out</a>
     </nav>
 
 </header>
 
-<!-- =====================================
-     MAIN PAGE
-===================================== -->
-
 <main id="home">
 
     <div class="user-info">
-
         <h3>
             Welcome,
-            <?= htmlspecialchars($_SESSION["user_email"] ?? "Customer", ENT_QUOTES, "UTF-8") ?>
+            <?= htmlspecialchars($_SESSION["user_email"] ?? "", ENT_QUOTES, "UTF-8") ?>
         </h3>
-
     </div>
-
-    <!-- HERO SECTION -->
 
     <section class="hero">
 
-        <div class="hero-content">
-
+        <div>
             <h1>
                 Good Food.
                 <br>
@@ -673,104 +401,57 @@ footer {
                 and serving customers online.
             </p>
 
-            <a href="#products" class="btn">
-                View Products
-            </a>
-
+            <a href="#products" class="btn">View Products</a>
         </div>
 
         <div class="hero-box">
-
-            <img
-                src="kanankelogo.png"
-                alt="Kananke Food Hauz Logo"
-            >
-
+            <img src="kanankelogo.png" alt="KANANKE'S FOOD HAUZ Logo">
         </div>
 
     </section>
 
-    <!-- PRODUCTS SECTION -->
-
-    <h2 class="section-title" id="products">
-        Our Products
-    </h2>
+    <h2 class="section-title" id="products">Our Products</h2>
 
     <section class="products">
 
         <div class="card">
-
             <div class="emoji">🍗</div>
-
             <h3>Food by Tray</h3>
-
-            <p>
-                Single Order Food
-            </p>
-
-            <a href="tray.php" class="price">
-                View Menu
-            </a>
-
+            <p>Single Order Food</p>
+            <a href="tray.php" class="price">View Menu</a>
         </div>
 
         <div class="card">
-
             <div class="emoji">🍱</div>
-
             <h3>Food Bundle</h3>
-
-            <p>
-                Bundle food with combos
-            </p>
-
-            <a href="bundle.php" class="price">
-                View Menu
-            </a>
-
+            <p>Bundle food with combos</p>
+            <a href="bundle.php" class="price">View Menu</a>
         </div>
 
         <div class="card">
-
             <div class="emoji">🛒</div>
-
             <h3>Additionals</h3>
-
-            <p>
-                Add some additional product
-            </p>
-
-            <a href="additionals.php" class="price">
-                View Menu
-            </a>
-
+            <p>Add some additional product</p>
+            <a href="additionals.php" class="price">View Menu</a>
         </div>
 
     </section>
 
-    <!-- ABOUT SECTION -->
-
-    <h2 class="section-title" id="about">
-        About Us
-    </h2>
+    <h2 class="section-title" id="about">About Us</h2>
 
     <section class="card about-card">
-
-        <p>
-            NOT DONE YET!
-        </p>
-
+        <p>NOT DONE YET!</p>
     </section>
 
 </main>
 
-<!-- FOOTER -->
-
 <footer>
-
-    © <?= date("Y") ?> Kananke Food Hauz. All rights reserved.
-
+    © 2026 Kananke Food Hauz. All rights reserved.
 </footer>
 
 </body>
 </html>
+
+<?php
+$conn->close();
+?>
