@@ -9,345 +9,252 @@ if (!isset($_SESSION["loggedIn"]) || $_SESSION["loggedIn"] !== true) {
 
 require_once "db.php";
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+// Keep MySQL timestamp handling consistent in UTC.
+$conn->query("SET time_zone = '+00:00'");
 
 $user_id = (int)($_SESSION["user_id"] ?? 0);
 
 if ($user_id <= 0) {
-    header("Location: login_page.php");
+    die("User session not found. Please log in again.");
+}
+
+// Convert UTC database timestamps to Philippine time.
+function formatPhilippineTime($timestamp) {
+    if (empty($timestamp)) {
+        return "";
+    }
+
+    try {
+        $date = new DateTimeImmutable(
+            $timestamp,
+            new DateTimeZone("UTC")
+        );
+
+        return $date
+            ->setTimezone(new DateTimeZone("Asia/Manila"))
+            ->format("M d, Y h:i A");
+
+    } catch (Exception $e) {
+        return htmlspecialchars($timestamp, ENT_QUOTES, "UTF-8");
+    }
+}
+
+if (empty($_SESSION["csrf_token"])) {
+    $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
+}
+
+function customerSupportRedirect($message, $type = "success") {
+    $_SESSION["support_message"] = $message;
+    $_SESSION["support_message_type"] = $type;
+    header("Location: contact_support.php");
     exit;
 }
 
-if (empty($_SESSION["support_csrf"])) {
-    $_SESSION["support_csrf"] = bin2hex(random_bytes(32));
-}
-
-$csrf_token = $_SESSION["support_csrf"];
-$success = "";
-$error = "";
-
 // =====================================
-// HANDLE FORM SUBMISSIONS
+// HANDLE CUSTOMER REQUESTS
 // =====================================
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
-    $submitted_token = $_POST["csrf_token"] ?? "";
+    $token = $_POST["csrf_token"] ?? "";
 
-    if (!hash_equals($csrf_token, $submitted_token)) {
-        $error = "Invalid security token. Please refresh the page and try again.";
-    } else {
-
-        $action = $_POST["action"] ?? "";
-
-        // =====================================
-        // CREATE NEW SUPPORT CONVERSATION
-        // =====================================
-
-        if ($action === "new_message") {
-
-            $message = trim($_POST["message"] ?? "");
-            $order_id_input = trim($_POST["order_id"] ?? "");
-
-            if ($message === "") {
-                $error = "Please enter your message.";
-            } elseif (strlen($message) < 3 || strlen($message) > 15000) {
-                $error = "Your message must contain between 3 and 15000 characters.";
-            } else {
-
-                $order_id = null;
-
-                // Optional order selection
-                if ($order_id_input !== "") {
-
-                    if (!ctype_digit($order_id_input)) {
-                        $error = "Invalid order selected.";
-                    } else {
-
-                        $selected_order_id = (int)$order_id_input;
-
-                        $check_order = $conn->prepare(
-                            "SELECT id
-                             FROM orders
-                             WHERE id = ? AND user_id = ?
-                             LIMIT 1"
-                        );
-
-                        $check_order->bind_param(
-                            "ii",
-                            $selected_order_id,
-                            $user_id
-                        );
-
-                        $check_order->execute();
-                        $order_result = $check_order->get_result();
-
-                        if ($order_result->num_rows === 0) {
-                            $error = "The selected order does not belong to your account.";
-                        } else {
-                            $order_id = $selected_order_id;
-                        }
-
-                        $check_order->close();
-                    }
-                }
-
-                if ($error === "") {
-
-                    $insert = $conn->prepare(
-                        "INSERT INTO support_messages
-                         (user_id, order_id, message, status, created_at)
-                         VALUES (?, ?, ?, 'Open', NOW())"
-                    );
-
-                    $insert->bind_param(
-                        "iis",
-                        $user_id,
-                        $order_id,
-                        $message
-                    );
-
-                    $insert->execute();
-                    $insert->close();
-
-                    header("Location: contact_support.php?sent=1");
-                    exit;
-                }
-            }
-        }
-
-        // =====================================
-        // CUSTOMER REPLY
-        // =====================================
-
-        elseif ($action === "send_reply") {
-
-            $support_id = (int)($_POST["support_id"] ?? 0);
-            $reply_message = trim($_POST["reply_message"] ?? "");
-
-            if ($support_id <= 0) {
-                $error = "Invalid conversation.";
-            } elseif ($reply_message === "") {
-                $error = "Please enter your reply.";
-            } elseif (strlen($reply_message) < 1 || strlen($reply_message) > 15000) {
-                $error = "Your reply is too long.";
-            } else {
-
-                // Make sure conversation belongs to customer
-                // and is not resolved.
-
-                $check = $conn->prepare(
-                    "SELECT id, status
-                     FROM support_messages
-                     WHERE id = ? AND user_id = ?
-                     LIMIT 1"
-                );
-
-                $check->bind_param("ii", $support_id, $user_id);
-                $check->execute();
-
-                $conversation = $check->get_result()->fetch_assoc();
-                $check->close();
-
-                if (!$conversation) {
-                    $error = "Conversation not found.";
-                } elseif ($conversation["status"] === "Resolved") {
-                    $error = "This conversation has been resolved. You cannot send another reply.";
-                } else {
-
-                    $conn->begin_transaction();
-
-                    try {
-
-                        $insert_reply = $conn->prepare(
-                            "INSERT INTO support_replies
-                             (support_id, sender_role, reply_message, created_at)
-                             VALUES (?, 'customer', ?, NOW())"
-                        );
-
-                        $insert_reply->bind_param(
-                            "is",
-                            $support_id,
-                            $reply_message
-                        );
-
-                        $insert_reply->execute();
-                        $insert_reply->close();
-
-                        $update_status = $conn->prepare(
-                            "UPDATE support_messages
-                             SET status = 'Open'
-                             WHERE id = ?
-                               AND user_id = ?
-                               AND status <> 'Resolved'"
-                        );
-
-                        $update_status->bind_param(
-                            "ii",
-                            $support_id,
-                            $user_id
-                        );
-
-                        $update_status->execute();
-                        $update_status->close();
-
-                        $conn->commit();
-
-                        header("Location: contact_support.php?replied=1");
-                        exit;
-
-                    } catch (Throwable $e) {
-                        $conn->rollback();
-                        throw $e;
-                    }
-                }
-            }
-        }
+    if (
+        !is_string($token) ||
+        !hash_equals($_SESSION["csrf_token"], $token)
+    ) {
+        customerSupportRedirect(
+            "Invalid request. Please try again.",
+            "error"
+        );
     }
+
+    $action = $_POST["action"] ?? "";
+    $message = trim($_POST["message"] ?? "");
+
+    if ($message === "" || strlen($message) > 5000) {
+        customerSupportRedirect(
+            "Please enter a message of up to 5000 characters.",
+            "error"
+        );
+    }
+
+    // =================================
+    // CUSTOMER REPLY
+    // =================================
+
+    if ($action === "reply") {
+
+        $support_id = filter_var(
+            $_POST["support_id"] ?? "",
+            FILTER_VALIDATE_INT
+        );
+
+        if (!$support_id || $support_id < 1) {
+            customerSupportRedirect("Invalid conversation.", "error");
+        }
+
+        // Verify ownership and conversation status.
+        $check = $conn->prepare(
+            "SELECT status
+             FROM support_messages
+             WHERE id = ? AND user_id = ?"
+        );
+
+        $check->bind_param("ii", $support_id, $user_id);
+        $check->execute();
+
+        $conversation = $check->get_result()->fetch_assoc();
+        $check->close();
+
+        if (!$conversation) {
+            customerSupportRedirect("Conversation not found.", "error");
+        }
+
+        if (strtolower(trim($conversation["status"])) === "resolved") {
+            customerSupportRedirect(
+                "This conversation has been resolved. Replies are disabled.",
+                "error"
+            );
+        }
+
+        // Save customer reply.
+        $insert = $conn->prepare(
+            "INSERT INTO support_replies
+             (support_id, sender_role, reply_message)
+             VALUES (?, 'customer', ?)"
+        );
+
+        $insert->bind_param("is", $support_id, $message);
+        $insert->execute();
+        $insert->close();
+
+        // Mark conversation as Open.
+        $update = $conn->prepare(
+            "UPDATE support_messages
+             SET status = 'Open'
+             WHERE id = ? AND user_id = ?"
+        );
+
+        $update->bind_param("ii", $support_id, $user_id);
+        $update->execute();
+        $update->close();
+
+        customerSupportRedirect("Your reply has been sent.");
+    }
+
+    // =================================
+    // CREATE NEW CONVERSATION
+    // =================================
+
+    if ($action === "new") {
+
+        $order_input = trim($_POST["order_id"] ?? "");
+        $order_id = null;
+
+        if ($order_input !== "" && strtolower($order_input) !== "other") {
+
+            $order_id = filter_var(
+                $order_input,
+                FILTER_VALIDATE_INT
+            );
+
+            if (!$order_id || $order_id < 1) {
+                customerSupportRedirect("Invalid order selected.", "error");
+            }
+
+            $check = $conn->prepare(
+                "SELECT id
+                 FROM orders
+                 WHERE id = ? AND user_id = ?"
+            );
+
+            $check->bind_param("ii", $order_id, $user_id);
+            $check->execute();
+
+            $valid = $check->get_result()->num_rows > 0;
+            $check->close();
+
+            if (!$valid) {
+                customerSupportRedirect(
+                    "The selected order is invalid.",
+                    "error"
+                );
+            }
+        }
+
+        if ($order_id === null) {
+
+            $insert = $conn->prepare(
+                "INSERT INTO support_messages
+                 (user_id, order_id, message, status)
+                 VALUES (?, NULL, ?, 'Open')"
+            );
+
+            $insert->bind_param("is", $user_id, $message);
+
+        } else {
+
+            $insert = $conn->prepare(
+                "INSERT INTO support_messages
+                 (user_id, order_id, message, status)
+                 VALUES (?, ?, ?, 'Open')"
+            );
+
+            $insert->bind_param("iis", $user_id, $order_id, $message);
+        }
+
+        $insert->execute();
+        $insert->close();
+
+        customerSupportRedirect("Your support message has been sent.");
+    }
+
+    customerSupportRedirect("Invalid action.", "error");
 }
 
 // =====================================
-// SUCCESS MESSAGES
+// NOTIFICATIONS
 // =====================================
 
-if (isset($_GET["sent"])) {
-    $success = "Your support message has been sent successfully.";
-}
+$notice = $_SESSION["support_message"] ?? "";
+$notice_type = $_SESSION["support_message_type"] ?? "";
 
-if (isset($_GET["replied"])) {
-    $success = "Your reply has been sent successfully.";
-}
-
-// =====================================
-// MARK ADMIN REPLIES AS READ
-// Runs when customer opens this page.
-// =====================================
-
-$read_stmt = $conn->prepare(
-    "UPDATE support_replies r
-     INNER JOIN support_messages s
-        ON s.id = r.support_id
-     SET r.read_at = NOW()
-     WHERE s.user_id = ?
-       AND r.sender_role = 'admin'
-       AND r.read_at IS NULL"
+unset(
+    $_SESSION["support_message"],
+    $_SESSION["support_message_type"]
 );
-
-$read_stmt->bind_param("i", $user_id);
-$read_stmt->execute();
-$read_stmt->close();
 
 // =====================================
 // GET CUSTOMER ORDERS
 // =====================================
 
-$orders = [];
-
 $order_stmt = $conn->prepare(
-    "SELECT id, product_name, total, order_date, status
+    "SELECT id, product_name
      FROM orders
      WHERE user_id = ?
-     ORDER BY id DESC"
+     ORDER BY order_date DESC"
 );
 
 $order_stmt->bind_param("i", $user_id);
 $order_stmt->execute();
 
-$order_result = $order_stmt->get_result();
-
-while ($row = $order_result->fetch_assoc()) {
-    $orders[] = $row;
-}
-
-$order_stmt->close();
+$orders = $order_stmt->get_result();
 
 // =====================================
-// GET CUSTOMER SUPPORT CONVERSATIONS
+// GET CUSTOMER CONVERSATIONS
 // =====================================
 
-$conversations = [];
-
-$support_stmt = $conn->prepare(
-    "SELECT
-        id,
-        order_id,
-        message,
-        status,
-        created_at
+$stmt = $conn->prepare(
+    "SELECT *
      FROM support_messages
      WHERE user_id = ?
-     ORDER BY created_at DESC, id DESC"
+     ORDER BY created_at DESC"
 );
 
-$support_stmt->bind_param("i", $user_id);
-$support_stmt->execute();
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
 
-$support_result = $support_stmt->get_result();
-
-while ($row = $support_result->fetch_assoc()) {
-    $conversations[] = $row;
-}
-
-$support_stmt->close();
-
-// =====================================
-// GET REPLIES FOR EACH CONVERSATION
-// =====================================
-
-$reply_stmt = $conn->prepare(
-    "SELECT
-        id,
-        sender_role,
-        reply_message,
-        created_at
-     FROM support_replies
-     WHERE support_id = ?
-     ORDER BY created_at ASC, id ASC"
-);
-
-foreach ($conversations as &$conversation) {
-
-    $conversation["replies"] = [];
-
-    $support_id = (int)$conversation["id"];
-
-    $reply_stmt->bind_param("i", $support_id);
-    $reply_stmt->execute();
-
-    $reply_result = $reply_stmt->get_result();
-
-    while ($reply = $reply_result->fetch_assoc()) {
-        $conversation["replies"][] = $reply;
-    }
-}
-
-unset($conversation);
-
-$reply_stmt->close();
-$conn->close();
-
-// =====================================
-// HELPER FUNCTIONS
-// =====================================
-
-function h($value) {
-    return htmlspecialchars((string)$value, ENT_QUOTES, "UTF-8");
-}
-
-function formatSupportDate($date) {
-    if (!$date) {
-        return "";
-    }
-
-    try {
-        $datetime = new DateTime($date, new DateTimeZone("UTC"));
-        $datetime->setTimezone(new DateTimeZone("Asia/Manila"));
-
-        return $datetime->format("M d, Y - h:i A");
-    } catch (Exception $e) {
-        return $date;
-    }
-}
+$conversations = $stmt->get_result();
 
 ?>
 
@@ -355,15 +262,12 @@ function formatSupportDate($date) {
 <html lang="en">
 
 <head>
-
 <meta charset="UTF-8">
-
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>Contact Support - Kananke Food Hauz</title>
 
 <style>
-
 * {
     box-sizing: border-box;
     margin: 0;
@@ -372,66 +276,66 @@ function formatSupportDate($date) {
 }
 
 body {
-    background: #f3f4f6;
-    color: #1f2937;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #fff7ed, #dcfce7);
+    color: #172018;
 }
 
 header {
-    background: #fff;
-    padding: 18px 6%;
+    background: white;
+    padding: 16px 6%;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 2px 10px #0001;
+    gap: 12px;
+    flex-wrap: wrap;
+    box-shadow: 0 2px 15px #0001;
 }
 
-.logo {
-    font-size: 23px;
-    font-weight: bold;
+.brand {
+    font-size: 24px;
+    font-weight: 800;
     color: #f97316;
 }
 
-.back-link {
+.back-btn {
+    background: #111827;
+    color: white;
+    padding: 11px 16px;
+    border-radius: 9px;
     text-decoration: none;
-    color: #fff;
-    background: #374151;
-    padding: 10px 16px;
-    border-radius: 8px;
     font-weight: bold;
 }
 
-.back-link:hover {
-    background: #111827;
-}
-
 .container {
-    max-width: 1000px;
-    margin: 35px auto;
-    padding: 0 18px;
+    max-width: 950px;
+    margin: auto;
+    padding: 40px 20px;
 }
 
-.page-title {
+h1 {
+    text-align: center;
+    font-size: 36px;
     margin-bottom: 10px;
-    font-size: 30px;
 }
 
-.page-description {
-    color: #6b7280;
-    margin-bottom: 25px;
-    line-height: 1.5;
+.subtitle {
+    text-align: center;
+    color: #667085;
+    margin-bottom: 30px;
 }
 
-.panel {
-    background: #fff;
+.card {
+    background: white;
     padding: 25px;
-    border-radius: 14px;
-    box-shadow: 0 4px 18px #0000000d;
+    border-radius: 16px;
+    box-shadow: 0 6px 20px #0001;
     margin-bottom: 25px;
 }
 
-.panel h2 {
+.card h2 {
+    color: #f97316;
     margin-bottom: 18px;
-    font-size: 21px;
 }
 
 label {
@@ -445,297 +349,231 @@ textarea {
     width: 100%;
     padding: 13px;
     border: 1px solid #d1d5db;
-    border-radius: 8px;
+    border-radius: 9px;
+    margin-bottom: 16px;
     font-size: 15px;
-    margin-bottom: 18px;
-    outline: none;
-}
-
-select:focus,
-textarea:focus {
-    border-color: #f97316;
 }
 
 textarea {
-    min-height: 120px;
+    min-height: 110px;
     resize: vertical;
 }
 
-.send-button {
-    background: #f97316;
-    color: #fff;
-    padding: 12px 20px;
-    border: none;
+button {
+    border: 0;
     border-radius: 8px;
+    padding: 12px 18px;
     font-weight: bold;
     cursor: pointer;
 }
 
-.send-button:hover {
-    background: #ea580c;
+.send-btn {
+    background: #f97316;
+    color: white;
 }
 
-.reply-button {
+.reply-btn {
     background: #2563eb;
+    color: white;
 }
 
-.reply-button:hover {
-    background: #1d4ed8;
+.notification {
+    padding: 14px;
+    border-radius: 9px;
+    text-align: center;
+    font-weight: bold;
+    margin-bottom: 20px;
 }
 
 .success {
     background: #dcfce7;
     color: #166534;
-    padding: 14px;
-    border-radius: 8px;
-    margin-bottom: 20px;
 }
 
 .error {
     background: #fee2e2;
     color: #991b1b;
-    padding: 14px;
-    border-radius: 8px;
-    margin-bottom: 20px;
 }
 
 .conversation {
-    background: #fff;
-    border-radius: 14px;
-    padding: 22px;
-    margin-bottom: 22px;
-    box-shadow: 0 4px 18px #0000000d;
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 18px;
 }
 
-.conversation-header {
+.top {
     display: flex;
     justify-content: space-between;
+    gap: 10px;
     align-items: center;
-    gap: 12px;
+    margin-bottom: 12px;
     flex-wrap: wrap;
-    margin-bottom: 15px;
 }
 
-.conversation-header h3 {
-    font-size: 18px;
+.conversation h3 {
+    color: #f97316;
 }
 
 .status {
     padding: 7px 12px;
-    border-radius: 30px;
+    border-radius: 20px;
     font-size: 12px;
     font-weight: bold;
 }
 
-.status-open {
+.open {
     background: #fef3c7;
     color: #92400e;
 }
 
-.status-replied {
+.replied {
     background: #dbeafe;
-    color: #1e40af;
+    color: #1d4ed8;
 }
 
-.status-resolved {
+.resolved {
     background: #dcfce7;
     color: #166534;
 }
 
-.original-message {
-    background: #f9fafb;
-    border-left: 4px solid #f97316;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 16px;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-}
-
-.message-label {
-    font-weight: bold;
-    font-size: 13px;
-    margin-bottom: 7px;
-}
-
-.message-date {
-    color: #9ca3af;
-    font-size: 12px;
-    margin-top: 8px;
-}
-
-.chat-reply {
-    padding: 15px;
+.chat-message {
+    padding: 13px;
     border-radius: 10px;
     margin: 12px 0;
     line-height: 1.6;
+    white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
 
-.admin-reply {
-    background: #eff6ff;
-    border-left: 4px solid #2563eb;
-    margin-right: 25px;
-}
-
-.customer-reply {
+.original,
+.customer {
     background: #fff7ed;
     border-left: 4px solid #f97316;
-    margin-left: 25px;
+}
+
+.admin {
+    background: #dcfce7;
+    border-left: 4px solid #16a34a;
+}
+
+.sender {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.date {
+    font-size: 12px;
+    color: #667085;
+    margin-top: 7px;
 }
 
 .reply-form {
-    margin-top: 20px;
-    border-top: 1px solid #e5e7eb;
-    padding-top: 18px;
-}
-
-.reply-form textarea {
-    min-height: 90px;
+    margin-top: 18px;
+    border-top: 1px solid #eee;
+    padding-top: 16px;
 }
 
 .resolved-notice {
-    background: #f3f4f6;
-    color: #6b7280;
-    padding: 13px;
-    border-radius: 8px;
     margin-top: 18px;
-    font-size: 14px;
+    padding: 13px;
+    background: #f3f4f6;
+    color: #4b5563;
+    border-radius: 9px;
+    font-weight: bold;
+    text-align: center;
 }
 
-.no-conversations {
-    background: #fff;
-    padding: 35px;
-    border-radius: 14px;
+.empty {
     text-align: center;
-    color: #6b7280;
-}
-
-footer {
-    text-align: center;
+    color: #667085;
     padding: 25px;
-    color: #9ca3af;
 }
 
 @media(max-width: 600px) {
-
     header {
-        gap: 12px;
-        flex-wrap: wrap;
+        padding: 15px 4%;
+    }
+
+    .brand {
+        font-size: 20px;
     }
 
     .container {
-        margin-top: 22px;
+        padding: 28px 12px;
     }
 
-    .panel,
-    .conversation {
-        padding: 17px;
+    h1 {
+        font-size: 29px;
     }
 
-    .admin-reply {
-        margin-right: 5px;
+    .card {
+        padding: 18px;
     }
-
-    .customer-reply {
-        margin-left: 5px;
-    }
-
 }
-
 </style>
-
 </head>
 
 <body>
 
 <header>
-
-    <div class="logo">
-        🍽 Kananke Food Hauz
-    </div>
-
-    <a href="index.php" class="back-link">
-        Back to Home
-    </a>
-
+    <div class="brand">🍽 Chekananke</div>
+    <a href="index.php" class="back-btn">Back to Home</a>
 </header>
 
-<div class="container">
+<main class="container">
 
-    <h1 class="page-title">Contact Support</h1>
-
-    <p class="page-description">
-        Have a question or concern? Send us a message.
-        Our admin team will respond to your concern here.
+    <h1>Contact Support</h1>
+    <p class="subtitle">
+        Send us a message and chat with our support team.
     </p>
 
-    <?php if ($success !== ""): ?>
-        <div class="success">
-            <?= h($success) ?>
+    <?php if ($notice !== ""): ?>
+        <div class="notification <?php echo htmlspecialchars($notice_type, ENT_QUOTES, "UTF-8"); ?>">
+            <?php echo htmlspecialchars($notice, ENT_QUOTES, "UTF-8"); ?>
         </div>
     <?php endif; ?>
 
-    <?php if ($error !== ""): ?>
-        <div class="error">
-            <?= h($error) ?>
-        </div>
-    <?php endif; ?>
+    <section class="card">
 
-    <!-- =====================================
-         NEW SUPPORT MESSAGE
-    ====================================== -->
+        <h2>Start a New Conversation</h2>
 
-    <section class="panel">
+        <form method="POST">
 
-        <h2>Send a New Message</h2>
+            <input
+                type="hidden"
+                name="csrf_token"
+                value="<?php echo htmlspecialchars($_SESSION["csrf_token"], ENT_QUOTES, "UTF-8"); ?>"
+            >
 
-        <form method="POST" action="contact_support.php">
+            <input type="hidden" name="action" value="new">
 
-            <input type="hidden" name="csrf_token" value="<?= h($csrf_token) ?>">
-
-            <input type="hidden" name="action" value="new_message">
-
-            <label for="order_id">
-                Select Order (Optional)
-            </label>
+            <label for="order_id">Select Order (Optional)</label>
 
             <select name="order_id" id="order_id">
+                <option value="">General Concern / No Order</option>
+                <option value="other">Other</option>
 
-                <option value="">
-                    General Concern / Other
-                </option>
-
-                <?php foreach ($orders as $order): ?>
-
-                    <option value="<?= (int)$order["id"] ?>">
-
-                        Order #<?= (int)$order["id"] ?>
-                        -
-                        <?= h($order["product_name"] ?? "Order") ?>
-                        -
-                        ₱<?= number_format((float)($order["total"] ?? 0), 2) ?>
-
+                <?php while ($order = $orders->fetch_assoc()): ?>
+                    <option value="<?php echo (int)$order["id"]; ?>">
+                        Order #<?php echo (int)$order["id"]; ?> -
+                        <?php echo htmlspecialchars($order["product_name"], ENT_QUOTES, "UTF-8"); ?>
                     </option>
-
-                <?php endforeach; ?>
+                <?php endwhile; ?>
 
             </select>
 
-            <label for="message">
-                Your Message
-            </label>
+            <label for="message">Your Message</label>
 
             <textarea
                 name="message"
                 id="message"
-                placeholder="Write your question or concern here..."
-                minlength="3"
-                maxlength="15000"
+                maxlength="5000"
+                placeholder="Write your question or concern..."
                 required
             ></textarea>
 
-            <button type="submit" class="send-button">
+            <button type="submit" class="send-btn">
                 Send Message
             </button>
 
@@ -743,192 +581,173 @@ footer {
 
     </section>
 
-    <!-- =====================================
-         CUSTOMER CONVERSATIONS
-    ====================================== -->
+    <section class="card">
 
-    <h2 style="margin-bottom:18px;">
-        My Support Conversations
-    </h2>
+        <h2>My Support Messages</h2>
 
-    <?php if (count($conversations) === 0): ?>
+        <?php if ($conversations->num_rows > 0): ?>
 
-        <div class="no-conversations">
-            <h3>No support conversations yet.</h3>
-            <p style="margin-top:8px;">
-                Send a message above if you need help.
-            </p>
-        </div>
+            <?php while ($conversation = $conversations->fetch_assoc()): ?>
 
-    <?php else: ?>
+                <?php
+                $support_id = (int)$conversation["id"];
 
-        <?php foreach ($conversations as $conversation): ?>
+                $status = strtolower(
+                    trim($conversation["status"] ?? "open")
+                );
 
-            <?php
-                $status = $conversation["status"] ?? "Open";
+                $status_class = in_array(
+                    $status,
+                    ["open", "replied", "resolved"],
+                    true
+                ) ? $status : "open";
 
-                $status_class = "status-open";
+                $reply_stmt = $conn->prepare(
+                    "SELECT id, sender_role, reply_message, created_at
+                     FROM support_replies
+                     WHERE support_id = ?
+                     ORDER BY created_at ASC, id ASC"
+                );
 
-                if ($status === "Replied") {
-                    $status_class = "status-replied";
-                } elseif ($status === "Resolved") {
-                    $status_class = "status-resolved";
-                }
-            ?>
+                $reply_stmt->bind_param("i", $support_id);
+                $reply_stmt->execute();
 
-            <section class="conversation">
+                $replies = $reply_stmt->get_result();
+                ?>
 
-                <div class="conversation-header">
+                <div class="conversation">
 
-                    <h3>
-                        Support Conversation #<?= (int)$conversation["id"] ?>
-                    </h3>
+                    <div class="top">
 
-                    <span class="status <?= h($status_class) ?>">
-                        <?= h($status) ?>
-                    </span>
+                        <h3>Message #<?php echo $support_id; ?></h3>
 
-                </div>
+                        <span class="status <?php echo $status_class; ?>">
+                            <?php echo htmlspecialchars($conversation["status"], ENT_QUOTES, "UTF-8"); ?>
+                        </span>
 
-                <?php if (!empty($conversation["order_id"])): ?>
-
-                    <p style="color:#6b7280; font-size:13px; margin-bottom:12px;">
-                        Related Order: #<?= (int)$conversation["order_id"] ?>
-                    </p>
-
-                <?php else: ?>
-
-                    <p style="color:#6b7280; font-size:13px; margin-bottom:12px;">
-                        General Concern
-                    </p>
-
-                <?php endif; ?>
-
-                <!-- Original customer message -->
-
-                <div class="original-message">
-
-                    <div class="message-label">
-                        Your Original Message
                     </div>
 
-                    <?= nl2br(h($conversation["message"])) ?>
+                    <?php if (!empty($conversation["order_id"])): ?>
 
-                    <div class="message-date">
-                        <?= h(formatSupportDate($conversation["created_at"])) ?>
+                        <p class="date">
+                            Related Order: #<?php echo (int)$conversation["order_id"]; ?>
+                        </p>
+
+                    <?php else: ?>
+
+                        <p class="date">
+                            General Concern / Other
+                        </p>
+
+                    <?php endif; ?>
+
+                    <div class="chat-message original">
+
+                        <div class="sender">You</div>
+
+                        <?php
+                        echo nl2br(
+                            htmlspecialchars($conversation["message"], ENT_QUOTES, "UTF-8")
+                        );
+                        ?>
+
+                        <div class="date">
+                            <?php echo formatPhilippineTime($conversation["created_at"]); ?>
+                        </div>
+
                     </div>
 
-                </div>
+                    <?php while ($reply = $replies->fetch_assoc()): ?>
 
-                <!-- Chat replies -->
+                        <?php
+                        $is_admin = $reply["sender_role"] === "admin";
+                        ?>
 
-                <?php foreach ($conversation["replies"] as $reply): ?>
+                        <div class="chat-message <?php echo $is_admin ? "admin" : "customer"; ?>">
 
-                    <?php if ($reply["sender_role"] === "admin"): ?>
-
-                        <div class="chat-reply admin-reply">
-
-                            <div class="message-label">
-                                Admin Support
+                            <div class="sender">
+                                <?php echo $is_admin ? "Customer Support" : "You"; ?>
                             </div>
 
-                            <?= nl2br(h($reply["reply_message"])) ?>
+                            <?php
+                            echo nl2br(
+                                htmlspecialchars($reply["reply_message"], ENT_QUOTES, "UTF-8")
+                            );
+                            ?>
 
-                            <div class="message-date">
-                                <?= h(formatSupportDate($reply["created_at"])) ?>
+                            <div class="date">
+                                <?php echo formatPhilippineTime($reply["created_at"]); ?>
                             </div>
 
                         </div>
 
+                    <?php endwhile; ?>
+
+                    <?php $reply_stmt->close(); ?>
+
+                    <?php if ($status !== "resolved"): ?>
+
+                        <form method="POST" class="reply-form">
+
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="<?php echo htmlspecialchars($_SESSION["csrf_token"], ENT_QUOTES, "UTF-8"); ?>"
+                            >
+
+                            <input type="hidden" name="action" value="reply">
+
+                            <input
+                                type="hidden"
+                                name="support_id"
+                                value="<?php echo $support_id; ?>"
+                            >
+
+                            <label>Reply to this conversation</label>
+
+                            <textarea
+                                name="message"
+                                maxlength="5000"
+                                placeholder="Write your reply..."
+                                required
+                            ></textarea>
+
+                            <button type="submit" class="reply-btn">
+                                Send Reply
+                            </button>
+
+                        </form>
+
                     <?php else: ?>
 
-                        <div class="chat-reply customer-reply">
-
-                            <div class="message-label">
-                                You
-                            </div>
-
-                            <?= nl2br(h($reply["reply_message"])) ?>
-
-                            <div class="message-date">
-                                <?= h(formatSupportDate($reply["created_at"])) ?>
-                            </div>
-
+                        <div class="resolved-notice">
+                            🔒 This conversation has been resolved.
+                            Replies are disabled.
                         </div>
 
                     <?php endif; ?>
 
-                <?php endforeach; ?>
+                </div>
 
-                <!-- Reply form is hidden when resolved -->
+            <?php endwhile; ?>
 
-                <?php if ($status !== "Resolved"): ?>
+        <?php else: ?>
 
-                    <form
-                        method="POST"
-                        action="contact_support.php"
-                        class="reply-form"
-                    >
+            <div class="empty">
+                You haven't sent any support messages yet.
+            </div>
 
-                        <input
-                            type="hidden"
-                            name="csrf_token"
-                            value="<?= h($csrf_token) ?>"
-                        >
+        <?php endif; ?>
 
-                        <input
-                            type="hidden"
-                            name="action"
-                            value="send_reply"
-                        >
+    </section>
 
-                        <input
-                            type="hidden"
-                            name="support_id"
-                            value="<?= (int)$conversation["id"] ?>"
-                        >
-
-                        <label>
-                            Send a Reply
-                        </label>
-
-                        <textarea
-                            name="reply_message"
-                            placeholder="Type your reply here..."
-                            maxlength="15000"
-                            required
-                        ></textarea>
-
-                        <button
-                            type="submit"
-                            class="send-button reply-button"
-                        >
-                            Send Reply
-                        </button>
-
-                    </form>
-
-                <?php else: ?>
-
-                    <div class="resolved-notice">
-                        This conversation has been resolved.
-                        You can still view the messages, but sending new replies is disabled.
-                        If you have another concern, please create a new support conversation.
-                    </div>
-
-                <?php endif; ?>
-
-            </section>
-
-        <?php endforeach; ?>
-
-    <?php endif; ?>
-
-</div>
-
-<footer>
-    © <?= date("Y") ?> Kananke Food Hauz. All rights reserved.
-</footer>
+</main>
 
 </body>
 </html>
+
+<?php
+$order_stmt->close();
+$stmt->close();
+$conn->close();
+?>
