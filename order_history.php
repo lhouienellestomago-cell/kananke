@@ -21,20 +21,28 @@ if (!isset($_SESSION["user_id"])) {
 
 $user_id = (int) $_SESSION["user_id"];
 
-// Create CSRF token.
+// Generate CSRF token.
 if (empty($_SESSION["csrf_token"])) {
     $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
 }
 
-// Handle order cancellation.
-if ($_SERVER["REQUEST_METHOD"] === "POST" &&
-    isset($_POST["cancel_order"])) {
+// =====================================
+// HANDLE ORDER CANCELLATION
+// =====================================
 
-    // Verify CSRF token.
+if (
+    $_SERVER["REQUEST_METHOD"] === "POST" &&
+    isset($_POST["cancel_order"])
+) {
+
     $token = $_POST["csrf_token"] ?? "";
 
+    // Verify CSRF token.
     if (!hash_equals($_SESSION["csrf_token"], $token)) {
-        $_SESSION["order_message"] = "Invalid request. Please try again.";
+
+        $_SESSION["order_message"] =
+            "Invalid request. Please try again.";
+
         $_SESSION["message_type"] = "error";
 
         header("Location: order_history.php");
@@ -48,6 +56,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" &&
     );
 
     if (!$order_id || $order_id < 1) {
+
         $_SESSION["order_message"] = "Invalid order ID.";
         $_SESSION["message_type"] = "error";
 
@@ -55,13 +64,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" &&
         exit;
     }
 
-    // Cancel only if the order belongs to this user
-    // and its current status is Pending.
+    // Only allow cancellation when status is Pending.
     $cancel_sql = "UPDATE orders
                    SET status = 'Cancelled'
                    WHERE id = ?
                    AND user_id = ?
-                   AND LOWER(status) = 'pending'";
+                   AND LOWER(TRIM(status)) = 'pending'";
 
     $cancel_stmt = $conn->prepare($cancel_sql);
 
@@ -83,7 +91,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" &&
     } else {
 
         $_SESSION["order_message"] =
-            "Unable to cancel this order. It may already have been accepted, cancelled, or does not belong to you.";
+            "Unable to cancel this order. Only Pending orders can be cancelled.";
 
         $_SESSION["message_type"] = "error";
     }
@@ -94,7 +102,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" &&
     exit;
 }
 
-// Get notification message.
+// =====================================
+// GET NOTIFICATION
+// =====================================
+
 $message = $_SESSION["order_message"] ?? "";
 $message_type = $_SESSION["message_type"] ?? "";
 
@@ -103,7 +114,10 @@ unset(
     $_SESSION["message_type"]
 );
 
-// Get only this user's orders.
+// =====================================
+// GET USER ORDERS
+// =====================================
+
 $sql = "SELECT *
         FROM orders
         WHERE user_id = ?
@@ -149,6 +163,8 @@ $result = $stmt->get_result();
             color: #172018;
         }
 
+        /* HEADER */
+
         header {
             background: white;
             padding: 16px 6%;
@@ -177,6 +193,8 @@ $result = $stmt->get_result();
             background: #374151;
         }
 
+        /* MAIN */
+
         .container {
             max-width: 1200px;
             margin: auto;
@@ -194,6 +212,8 @@ $result = $stmt->get_result();
             color: #667085;
             margin-bottom: 30px;
         }
+
+        /* TABLE */
 
         .table-container {
             background: white;
@@ -225,6 +245,8 @@ $result = $stmt->get_result();
             background: #fff7ed;
         }
 
+        /* PRICE */
+
         .price {
             color: #f97316;
             font-weight: 800;
@@ -242,25 +264,35 @@ $result = $stmt->get_result();
             white-space: nowrap;
         }
 
+        /* PENDING - YELLOW */
+
         .pending {
             background: #fef3c7;
             color: #92400e;
         }
 
-        .accepted {
+        /* APPROVED / ACCEPTED - GREEN */
+
+        .approved {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        /* PREPARING - BLUE */
+
+        .preparing {
             background: #dbeafe;
             color: #1d4ed8;
         }
 
-        .preparing {
-            background: #ffedd5;
-            color: #c2410c;
-        }
+        /* COMPLETED - GREEN */
 
         .completed {
-            background: #dcfce7;
+            background: #bbf7d0;
             color: #166534;
         }
+
+        /* CANCELLED - RED */
 
         .cancelled {
             background: #fee2e2;
@@ -300,7 +332,7 @@ $result = $stmt->get_result();
             font-size: 13px;
         }
 
-        /* NOTIFICATION */
+        /* NOTIFICATIONS */
 
         .message {
             padding: 15px;
@@ -322,6 +354,8 @@ $result = $stmt->get_result();
             border: 1px solid #fca5a5;
         }
 
+        /* EMPTY */
+
         .empty {
             text-align: center;
             padding: 40px;
@@ -332,6 +366,8 @@ $result = $stmt->get_result();
             margin-bottom: 10px;
             color: #172018;
         }
+
+        /* MOBILE */
 
         @media(max-width: 700px) {
 
@@ -427,11 +463,17 @@ $result = $stmt->get_result();
                             $status_key = strtolower($status);
 
                             $status_class = match ($status_key) {
+
                                 "pending" => "pending",
-                                "accepted" => "accepted",
+
+                                "approved", "accepted" => "approved",
+
                                 "preparing" => "preparing",
+
                                 "completed" => "completed",
+
                                 "cancelled" => "cancelled",
+
                                 default => "unknown"
                             };
 
