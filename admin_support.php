@@ -1,156 +1,187 @@
-
 <?php
-
 session_start();
 
-// Admin authentication.
+// =====================================
+// ADMIN LOGIN CHECK
+// =====================================
+
 if (
     !isset($_SESSION["loggedIn"]) ||
     $_SESSION["loggedIn"] !== true ||
-    strtolower(trim($_SESSION["role"] ?? "")) !== "admin"
+    ($_SESSION["role"] ?? "") !== "admin"
 ) {
-    header("Location: login_page.php");
+    header("Location: login.php");
     exit;
 }
 
+// =====================================
+// DATABASE CONNECTION
+// =====================================
+
 require_once "db.php";
 
-if (empty($_SESSION["admin_support_csrf"])) {
-    $_SESSION["admin_support_csrf"] = bin2hex(random_bytes(32));
+// =====================================
+// CSRF TOKEN
+// =====================================
+
+if (empty($_SESSION["csrf_token"])) {
+    $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
 }
 
-$notice = $_SESSION["admin_support_notice"] ?? "";
-$notice_type = $_SESSION["admin_support_type"] ?? "";
+// =====================================
+// NOTIFICATIONS
+// =====================================
+
+$message = $_SESSION["support_message"] ?? "";
+$message_type = $_SESSION["support_message_type"] ?? "";
 
 unset(
-    $_SESSION["admin_support_notice"],
-    $_SESSION["admin_support_type"]
+    $_SESSION["support_message"],
+    $_SESSION["support_message_type"]
 );
 
-// Handle admin reply or resolve action.
+// =====================================
+// HANDLE ADMIN ACTIONS
+// =====================================
+
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     $token = $_POST["csrf_token"] ?? "";
 
-    if (!hash_equals($_SESSION["admin_support_csrf"], $token)) {
-
-        $_SESSION["admin_support_notice"] = "Invalid request.";
-        $_SESSION["admin_support_type"] = "error";
+    if (
+        !is_string($token) ||
+        !hash_equals($_SESSION["csrf_token"], $token)
+    ) {
+        $_SESSION["support_message"] = "Invalid request. Please try again.";
+        $_SESSION["support_message_type"] = "error";
 
         header("Location: admin_support.php");
         exit;
     }
 
-    $message_id = filter_input(
+    $action = $_POST["action"] ?? "";
+
+    $support_id = filter_input(
         INPUT_POST,
-        "message_id",
+        "support_id",
         FILTER_VALIDATE_INT
     );
 
-    if (!$message_id || $message_id < 1) {
-
-        $_SESSION["admin_support_notice"] = "Invalid message ID.";
-        $_SESSION["admin_support_type"] = "error";
+    if (!$support_id || $support_id < 1) {
+        $_SESSION["support_message"] = "Invalid support message ID.";
+        $_SESSION["support_message_type"] = "error";
 
         header("Location: admin_support.php");
         exit;
     }
 
-    // Send reply.
-    if (isset($_POST["send_reply"])) {
+    // =================================
+    // REPLY TO CUSTOMER
+    // =================================
+
+    if ($action === "reply") {
 
         $reply = trim($_POST["admin_reply"] ?? "");
 
-        if (strlen($reply) < 1 || strlen($reply) > 5000) {
+        if ($reply === "") {
 
-            $_SESSION["admin_support_notice"] =
-                "Reply must contain between 1 and 5000 characters.";
-
-            $_SESSION["admin_support_type"] = "error";
+            $_SESSION["support_message"] = "Please enter a reply.";
+            $_SESSION["support_message_type"] = "error";
 
         } else {
 
-            $stmt = $conn->prepare(
-                "UPDATE support_messages
-                 SET admin_reply = ?,
-                     status = 'Replied',
-                     replied_at = CURRENT_TIMESTAMP
-                 WHERE id = ?
-                 AND status <> 'Resolved'"
+            $sql = "UPDATE support_messages
+                    SET admin_reply = ?,
+                        status = 'Replied',
+                        replied_at = NOW()
+                    WHERE id = ?
+                    AND status <> 'Resolved'";
+
+            $stmt = $conn->prepare($sql);
+
+            $stmt->bind_param(
+                "si",
+                $reply,
+                $support_id
             );
 
-            $stmt->bind_param("si", $reply, $message_id);
             $stmt->execute();
 
             if ($stmt->affected_rows > 0) {
-                $_SESSION["admin_support_notice"] =
-                    "Reply sent successfully.";
-                $_SESSION["admin_support_type"] = "success";
+                $_SESSION["support_message"] = "Your reply was successfully sent.";
+                $_SESSION["support_message_type"] = "success";
             } else {
-                $_SESSION["admin_support_notice"] =
-                    "Message not found or already resolved.";
-                $_SESSION["admin_support_type"] = "error";
+                $_SESSION["support_message"] =
+                    "Message not found or it has already been resolved.";
+                $_SESSION["support_message_type"] = "error";
             }
 
             $stmt->close();
         }
-    }
 
-    // Resolve message.
-    elseif (isset($_POST["resolve_message"])) {
+    // =================================
+    // MARK MESSAGE AS RESOLVED
+    // =================================
 
-        $stmt = $conn->prepare(
-            "UPDATE support_messages
-             SET status = 'Resolved'
-             WHERE id = ?"
+    } elseif ($action === "resolve") {
+
+        $sql = "UPDATE support_messages
+                SET status = 'Resolved'
+                WHERE id = ?
+                AND status <> 'Resolved'";
+
+        $stmt = $conn->prepare($sql);
+
+        $stmt->bind_param(
+            "i",
+            $support_id
         );
 
-        $stmt->bind_param("i", $message_id);
         $stmt->execute();
 
-        $_SESSION["admin_support_notice"] =
-            "Support message marked as resolved.";
-
-        $_SESSION["admin_support_type"] = "success";
+        if ($stmt->affected_rows > 0) {
+            $_SESSION["support_message"] = "Support message marked as resolved.";
+            $_SESSION["support_message_type"] = "success";
+        } else {
+            $_SESSION["support_message"] =
+                "Message not found or already resolved.";
+            $_SESSION["support_message_type"] = "error";
+        }
 
         $stmt->close();
+
+    } else {
+
+        $_SESSION["support_message"] = "Invalid action.";
+        $_SESSION["support_message_type"] = "error";
     }
 
     header("Location: admin_support.php");
     exit;
 }
 
-// Count open messages.
-$count_result = $conn->query(
-    "SELECT COUNT(*) AS total
-     FROM support_messages
-     WHERE status = 'Open'"
-);
+// =====================================
+// GET ALL CUSTOMER SUPPORT MESSAGES
+// =====================================
 
-$open_count = (int) $count_result->fetch_assoc()["total"];
-
-// Get all support messages and customer emails.
 $sql = "SELECT
-            sm.id,
-            sm.user_id,
-            sm.order_id,
-            sm.message,
-            sm.admin_reply,
-            sm.status,
-            sm.created_at,
-            sm.replied_at,
+            s.id,
+            s.user_id,
+            s.order_id,
+            s.message,
+            s.admin_reply,
+            s.status,
+            s.created_at,
+            s.replied_at,
             u.email
-        FROM support_messages sm
-        LEFT JOIN users u ON sm.user_id = u.id
-        ORDER BY
-            CASE
-                WHEN sm.status = 'Open' THEN 0
-                WHEN sm.status = 'Replied' THEN 1
-                ELSE 2
-            END,
-            sm.created_at DESC";
+        FROM support_messages s
+        LEFT JOIN users u ON s.user_id = u.id
+        ORDER BY s.created_at DESC";
 
-$result = $conn->query($sql);
+$stmt = $conn->prepare($sql);
+$stmt->execute();
+
+$result = $stmt->get_result();
 
 ?>
 
@@ -159,394 +190,545 @@ $result = $conn->query($sql);
 
 <head>
 
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
 
-<title>Customer Support - Admin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<style>
+    <title>Customer Support - Kananke Food Hauz</title>
 
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-    font-family: Arial, sans-serif;
-}
+    <style>
 
-body {
-    background: #f3f4f6;
-    min-height: 100vh;
-    color: #172018;
-}
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
 
-header {
-    background: #111827;
-    color: white;
-    padding: 18px 6%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
+        body {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #fff7ed, #dcfce7);
+            color: #172018;
+        }
 
-.brand {
-    font-size: 23px;
-    font-weight: bold;
-    color: #fb923c;
-}
+        /* HEADER */
 
-.back {
-    background: white;
-    color: #111827;
-    padding: 10px 15px;
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: bold;
-}
+        header {
+            background: white;
+            padding: 18px 6%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            box-shadow: 0 2px 15px #0001;
+        }
 
-.container {
-    max-width: 1100px;
-    margin: auto;
-    padding: 35px 20px;
-}
+        .brand {
+            font-size: 24px;
+            font-weight: 800;
+            color: #f97316;
+        }
 
-h1 {
-    margin-bottom: 10px;
-}
+        .back-btn {
+            background: #111827;
+            color: white;
+            padding: 11px 17px;
+            border-radius: 9px;
+            text-decoration: none;
+            font-weight: bold;
+        }
 
-.subtitle {
-    color: #667085;
-    margin-bottom: 25px;
-}
+        .back-btn:hover {
+            background: #374151;
+        }
 
-.counter {
-    background: white;
-    padding: 20px;
-    border-radius: 12px;
-    margin-bottom: 25px;
-    box-shadow: 0 3px 12px #0001;
-}
+        /* MAIN */
 
-.counter strong {
-    color: #ea580c;
-    font-size: 26px;
-}
+        .container {
+            max-width: 1100px;
+            margin: auto;
+            padding: 40px 20px;
+        }
 
-.card {
-    background: white;
-    padding: 22px;
-    border-radius: 14px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 15px #0001;
-}
+        .page-title {
+            text-align: center;
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
 
-.card h3 {
-    margin: 12px 0;
-}
+        .subtitle {
+            text-align: center;
+            color: #667085;
+            margin-bottom: 30px;
+        }
 
-.info {
-    color: #667085;
-    font-size: 13px;
-    line-height: 1.8;
-}
+        /* NOTIFICATIONS */
 
-.customer-message {
-    background: #f9fafb;
-    padding: 15px;
-    border-radius: 9px;
-    margin-top: 15px;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-}
+        .notification {
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
 
-.status {
-    display: inline-block;
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: bold;
-}
+        .success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
 
-.open {
-    background: #fef3c7;
-    color: #92400e;
-}
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
 
-.replied {
-    background: #dbeafe;
-    color: #1d4ed8;
-}
+        /* SUPPORT CARD */
 
-.resolved {
-    background: #dcfce7;
-    color: #166534;
-}
+        .support-card {
+            background: white;
+            padding: 25px;
+            margin-bottom: 22px;
+            border-radius: 16px;
+            box-shadow: 0 6px 20px #0001;
+        }
 
-.reply-box {
-    margin-top: 18px;
-}
+        .card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
 
-textarea {
-    width: 100%;
-    min-height: 100px;
-    padding: 12px;
-    border: 1px solid #ddd;
-    border-radius: 9px;
-    resize: vertical;
-    font-size: 14px;
-}
+        .card-top h2 {
+            font-size: 20px;
+            color: #f97316;
+        }
 
-button {
-    padding: 11px 16px;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-    margin-top: 10px;
-}
+        .details {
+            color: #667085;
+            font-size: 14px;
+            line-height: 1.8;
+            margin-bottom: 15px;
+        }
 
-.reply-btn {
-    background: #f97316;
-    color: white;
-}
+        .customer-message {
+            background: #fff7ed;
+            padding: 16px;
+            border-radius: 10px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            margin-bottom: 18px;
+        }
 
-.resolve-btn {
-    background: #16a34a;
-    color: white;
-    margin-left: 7px;
-}
+        /* STATUS */
 
-.admin-reply {
-    background: #f0fdf4;
-    padding: 15px;
-    border-left: 4px solid #16a34a;
-    border-radius: 8px;
-    margin-top: 15px;
-    line-height: 1.6;
-}
+        .status {
+            display: inline-block;
+            padding: 7px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
 
-.notice {
-    padding: 14px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    font-weight: bold;
-}
+        .open {
+            background: #fef3c7;
+            color: #92400e;
+        }
 
-.success {
-    background: #dcfce7;
-    color: #166534;
-}
+        .replied {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
 
-.error {
-    background: #fee2e2;
-    color: #991b1b;
-}
+        .resolved {
+            background: #dcfce7;
+            color: #166534;
+        }
 
-.empty {
-    text-align: center;
-    padding: 35px;
-    background: white;
-    border-radius: 12px;
-    color: #667085;
-}
+        /* ADMIN REPLY */
 
-@media(max-width: 600px) {
-    header {
-        padding: 15px 4%;
-    }
+        .reply-label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
 
-    .brand {
-        font-size: 18px;
-    }
+        textarea {
+            width: 100%;
+            min-height: 110px;
+            padding: 13px;
+            border: 1px solid #d1d5db;
+            border-radius: 9px;
+            resize: vertical;
+            font-size: 15px;
+            margin-bottom: 12px;
+        }
 
-    .card {
-        padding: 16px;
-    }
+        textarea:focus {
+            outline: none;
+            border-color: #f97316;
+            box-shadow: 0 0 0 2px #f9731630;
+        }
 
-    .resolve-btn {
-        margin-left: 0;
-    }
-}
+        .admin-reply {
+            background: #dcfce7;
+            border-left: 4px solid #16a34a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 18px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
 
-</style>
+        .reply-title {
+            font-weight: bold;
+            color: #166534;
+            margin-bottom: 8px;
+        }
+
+        /* BUTTONS */
+
+        .button-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .reply-btn {
+            background: #f97316;
+            color: white;
+            border: none;
+            padding: 11px 18px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .reply-btn:hover {
+            background: #ea580c;
+        }
+
+        .resolve-btn {
+            background: #16a34a;
+            color: white;
+            border: none;
+            padding: 11px 18px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .resolve-btn:hover {
+            background: #15803d;
+        }
+
+        .resolved-text {
+            color: #166534;
+            font-weight: bold;
+            padding: 10px 0;
+        }
+
+        /* EMPTY */
+
+        .empty {
+            background: white;
+            padding: 50px 20px;
+            text-align: center;
+            border-radius: 16px;
+            box-shadow: 0 6px 20px #0001;
+        }
+
+        .empty h2 {
+            margin-bottom: 10px;
+        }
+
+        .empty p {
+            color: #667085;
+        }
+
+        /* MOBILE */
+
+        @media (max-width: 600px) {
+
+            header {
+                padding: 16px 4%;
+            }
+
+            .brand {
+                font-size: 20px;
+            }
+
+            .container {
+                padding: 28px 12px;
+            }
+
+            .page-title {
+                font-size: 29px;
+            }
+
+            .support-card {
+                padding: 18px;
+            }
+
+        }
+
+    </style>
 
 </head>
 
 <body>
 
-<header>
+    <!-- HEADER -->
 
-    <div class="brand">
-        🍽 Kananke Food Hauz
-    </div>
+    <header>
 
-    <a href="admin_dashboard.php" class="back">
-        Admin Dashboard
-    </a>
-
-</header>
-
-<div class="container">
-
-    <h1>Customer Support</h1>
-
-    <p class="subtitle">
-        View customer concerns and respond to their messages.
-    </p>
-
-    <div class="counter">
-
-        <p>Open Support Messages</p>
-
-        <strong>
-            <?php echo $open_count; ?>
-        </strong>
-
-    </div>
-
-    <?php if ($notice !== ""): ?>
-
-        <div class="notice <?php echo htmlspecialchars($notice_type); ?>">
-            <?php echo htmlspecialchars($notice); ?>
+        <div class="brand">
+            🍽 Chekananke
         </div>
 
-    <?php endif; ?>
+        <a href="admin_dashboard.php" class="back-btn">
+            Back to Dashboard
+        </a>
 
-    <?php if ($result->num_rows > 0): ?>
+    </header>
 
-        <?php while ($row = $result->fetch_assoc()): ?>
+    <!-- MAIN -->
 
-            <?php
-            $status_class = strtolower($row["status"]);
-            ?>
+    <main class="container">
 
-            <div class="card">
+        <h1 class="page-title">
+            Customer Support
+        </h1>
 
-                <span class="status <?php echo htmlspecialchars($status_class); ?>">
-                    <?php echo htmlspecialchars($row["status"]); ?>
-                </span>
+        <p class="subtitle">
+            View customer concerns and respond to their messages.
+        </p>
 
-                <h3>
-                    Support Message #<?php echo (int) $row["id"]; ?>
-                </h3>
+        <!-- NOTIFICATION -->
 
-                <div class="info">
+        <?php if ($message !== ""): ?>
 
-                    Customer:
-                    <?php echo htmlspecialchars($row["email"] ?? "Unknown customer"); ?>
+            <div class="notification <?php echo htmlspecialchars($message_type); ?>">
+                <?php echo htmlspecialchars($message); ?>
+            </div>
 
-                    <br>
+        <?php endif; ?>
 
-                    Customer ID:
-                    <?php echo (int) $row["user_id"]; ?>
+        <!-- SUPPORT MESSAGES -->
 
-                    <br>
+        <?php if ($result->num_rows > 0): ?>
 
-                    Related Order:
-                    <?php echo $row["order_id"] ? "#" . (int) $row["order_id"] : "General Inquiry"; ?>
+            <?php while ($row = $result->fetch_assoc()): ?>
 
-                    <br>
+                <?php
 
-                    Date:
-                    <?php echo htmlspecialchars($row["created_at"]); ?>
+                $status = strtolower(trim((string)($row["status"] ?? "open")));
 
-                </div>
+                $status_class = match ($status) {
+                    "open" => "open",
+                    "replied" => "replied",
+                    "resolved" => "resolved",
+                    default => "open"
+                };
 
-                <div class="customer-message">
+                ?>
 
-                    <strong>Customer Message:</strong>
+                <section class="support-card">
 
-                    <p>
-                        <?php echo nl2br(htmlspecialchars($row["message"])); ?>
-                    </p>
+                    <div class="card-top">
 
-                </div>
+                        <h2>
+                            Support Message #<?php echo (int)$row["id"]; ?>
+                        </h2>
 
-                <?php if (!empty($row["admin_reply"])): ?>
-
-                    <div class="admin-reply">
-
-                        <strong>Your Reply:</strong>
-
-                        <p>
-                            <?php echo nl2br(htmlspecialchars($row["admin_reply"])); ?>
-                        </p>
+                        <span class="status <?php echo $status_class; ?>">
+                            <?php echo htmlspecialchars($row["status"]); ?>
+                        </span>
 
                     </div>
 
-                <?php endif; ?>
+                    <div class="details">
 
-                <?php if ($row["status"] !== "Resolved"): ?>
+                        <strong>Customer:</strong>
+                        <?php echo htmlspecialchars($row["email"] ?? "Unknown customer"); ?>
 
-                    <form
-                        method="POST"
-                        action="admin_support.php"
-                        class="reply-box"
-                    >
+                        <br>
 
-                        <input
-                            type="hidden"
-                            name="csrf_token"
-                            value="<?php echo htmlspecialchars($_SESSION["admin_support_csrf"]); ?>"
+                        <strong>Customer ID:</strong>
+                        <?php echo (int)$row["user_id"]; ?>
+
+                        <br>
+
+                        <strong>Order ID:</strong>
+                        <?php
+                        echo $row["order_id"] !== null
+                            ? "#" . (int)$row["order_id"]
+                            : "Not specified";
+                        ?>
+
+                        <br>
+
+                        <strong>Date:</strong>
+                        <?php
+                        echo htmlspecialchars(
+                            date("M d, Y h:i A", strtotime($row["created_at"]))
+                        );
+                        ?>
+
+                    </div>
+
+                    <h3 class="reply-title">
+                        Customer Message
+                    </h3>
+
+                    <div class="customer-message"><?php
+                        echo htmlspecialchars($row["message"]);
+                    ?></div>
+
+                    <?php if (!empty($row["admin_reply"])): ?>
+
+                        <h3 class="reply-title">
+                            Your Reply
+                        </h3>
+
+                        <div class="admin-reply"><?php
+                            echo htmlspecialchars($row["admin_reply"]);
+                        ?></div>
+
+                        <?php if (!empty($row["replied_at"])): ?>
+
+                            <div class="details">
+                                <strong>Replied:</strong>
+                                <?php
+                                echo htmlspecialchars(
+                                    date("M d, Y h:i A", strtotime($row["replied_at"]))
+                                );
+                                ?>
+                            </div>
+
+                        <?php endif; ?>
+
+                    <?php endif; ?>
+
+                    <?php if ($status !== "resolved"): ?>
+
+                        <!-- REPLY FORM -->
+
+                        <form method="POST" action="admin_support.php">
+
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="<?php echo htmlspecialchars($_SESSION["csrf_token"]); ?>"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="support_id"
+                                value="<?php echo (int)$row["id"]; ?>"
+                            >
+
+                            <input
+                                type="hidden"
+                                name="action"
+                                value="reply"
+                            >
+
+                            <label class="reply-label">
+                                Write a Reply
+                            </label>
+
+                            <textarea
+                                name="admin_reply"
+                                placeholder="Type your reply to the customer..."
+                                required
+                            ></textarea>
+
+                            <div class="button-row">
+
+                                <button type="submit" class="reply-btn">
+                                    Send Reply
+                                </button>
+
+                            </div>
+
+                        </form>
+
+                        <!-- RESOLVE FORM -->
+
+                        <form
+                            method="POST"
+                            action="admin_support.php"
+                            onsubmit="return confirm('Are you sure you want to mark this message as resolved?');"
+                            style="margin-top: 12px;"
                         >
 
-                        <input
-                            type="hidden"
-                            name="message_id"
-                            value="<?php echo (int) $row["id"]; ?>"
-                        >
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="<?php echo htmlspecialchars($_SESSION["csrf_token"]); ?>"
+                            >
 
-                        <textarea
-                            name="admin_reply"
-                            placeholder="Write your reply to the customer..."
-                            maxlength="5000"
-                            required
-                        ></textarea>
+                            <input
+                                type="hidden"
+                                name="support_id"
+                                value="<?php echo (int)$row["id"]; ?>"
+                            >
 
-                        <button
-                            type="submit"
-                            name="send_reply"
-                            class="reply-btn"
-                        >
-                            Send Reply
-                        </button>
+                            <input
+                                type="hidden"
+                                name="action"
+                                value="resolve"
+                            >
 
-                        <button
-                            type="submit"
-                            name="resolve_message"
-                            class="resolve-btn"
-                            onclick="return confirm('Mark this support message as resolved?');"
-                        >
-                            Mark as Resolved
-                        </button>
+                            <button type="submit" class="resolve-btn">
+                                Mark as Resolved
+                            </button>
 
-                    </form>
+                        </form>
 
-                <?php else: ?>
+                    <?php else: ?>
 
-                    <p style="color:#16a34a;font-weight:bold;margin-top:15px;">
-                        This support message is resolved.
-                    </p>
+                        <div class="resolved-text">
+                            This support message has been resolved.
+                        </div>
 
-                <?php endif; ?>
+                    <?php endif; ?>
+
+                </section>
+
+            <?php endwhile; ?>
+
+        <?php else: ?>
+
+            <div class="empty">
+
+                <h2>No Support Messages Yet</h2>
+
+                <p>
+                    Customer messages will appear here when someone contacts support.
+                </p>
 
             </div>
 
-        <?php endwhile; ?>
+        <?php endif; ?>
 
-    <?php else: ?>
-
-        <div class="empty">
-            <h3>No Support Messages Yet</h3>
-            <p>Customer messages will appear here.</p>
-        </div>
-
-    <?php endif; ?>
-
-</div>
+    </main>
 
 </body>
+
 </html>
 
 <?php
+
+$stmt->close();
 $conn->close();
+
 ?>
