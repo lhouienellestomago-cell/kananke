@@ -597,8 +597,8 @@ pictureInput.addEventListener("change", function () {
         return;
     }
 
-    if (file.size > 2 * 1024 * 1024) {
-        alert("Your picture must be 2 MB or smaller.");
+    if (file.size > 5 * 1024 * 1024) {
+        alert("Your picture must be 5 MB or smaller.");
         this.value = "";
         return;
     }
