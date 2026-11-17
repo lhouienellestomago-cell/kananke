@@ -527,7 +527,6 @@ footer {
 
     <section class="card about-card">
 
-        <p>NOT DONE YET!</p>
 
         <!-- FACEBOOK PROFILE BUTTON -->
 
@@ -539,7 +538,7 @@ footer {
                 rel="noopener noreferrer"
                 class="facebook-button"
                 aria-label="Visit our Facebook profile"
-                title="Visit our Facebook profile"
+                title="Visit our Facebook Account"
             >
                 <span>f</span>
             </a>
@@ -550,7 +549,7 @@ footer {
                 rel="noopener noreferrer"
                 class="facebook-text"
             >
-                Visit Our Facebook Page
+                Visit Our Facebook Account
             </a>
 
         </div>
