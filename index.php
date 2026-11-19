@@ -921,7 +921,7 @@ button {
 
             <a href="tray.php">
                 <span class="ico">🍽</span>
-                Food Order
+                Food By Tray
             </a>
 
             <a href="bundle.php">
