@@ -60,7 +60,6 @@ $count = cart_item_count();
    href="cart.php"
    aria-label="Open shopping cart"
    title="My Cart">
-
     🛒
 
     <?php if ($count > 0): ?>
@@ -68,5 +67,4 @@ $count = cart_item_count();
             <?= $count > 99 ? '99+' : $count ?>
         </span>
     <?php endif; ?>
-
 </a>
