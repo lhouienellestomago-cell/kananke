@@ -137,6 +137,24 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     customerSupportRedirect("Invalid action.", "error");
 }
 
+// Mark admin replies in this customer's own conversations as read.
+// This runs whenever the customer opens Contact Support.
+try {
+    $markReadStmt = $conn->prepare(
+        "UPDATE support_replies r
+         INNER JOIN support_messages s ON s.id = r.support_id
+         SET r.read_at = NOW()
+         WHERE s.user_id = ?
+           AND r.sender_role = 'admin'
+           AND r.read_at IS NULL"
+    );
+    $markReadStmt->bind_param("i", $user_id);
+    $markReadStmt->execute();
+    $markReadStmt->close();
+} catch (Throwable $e) {
+    error_log("Mark support replies as read error: " . $e->getMessage());
+}
+
 // One-time notification.
 $notice = (string)($_SESSION["support_message"] ?? "");
 $notice_type = (string)($_SESSION["support_message_type"] ?? "");
