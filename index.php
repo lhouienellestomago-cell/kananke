@@ -762,23 +762,41 @@ button {
 
 /* MOBILE */
 
+
 @media(max-width:600px) {
+
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        overflow-x: hidden;
+    }
 
     .app {
         display: flex;
         flex-direction: column;
+        width: 100%;
+        min-width: 0;
     }
 
+    /* TOP NAVIGATION */
+
     .sidebar {
+        width: 100%;
         min-height: auto;
-        padding: 14px 15px;
+        padding: 13px 14px;
         border-right: 0;
         border-bottom: 1px solid #eee;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: #fff;
     }
 
     .brand {
         margin: 0 0 12px;
-        font-size: 20px;
+        font-size: 21px;
     }
 
     .nav-label,
@@ -792,41 +810,67 @@ button {
         display: flex;
         overflow-x: auto;
         gap: 7px;
-        padding-bottom: 2px;
+        padding-bottom: 3px;
+        scrollbar-width: none;
+    }
+
+    .nav::-webkit-scrollbar {
+        display: none;
     }
 
     .nav a {
-        white-space: nowrap;
+        flex-shrink: 0;
         min-height: 38px;
-        padding: 0 11px;
+        padding: 0 12px;
         font-size: 11px;
+        white-space: nowrap;
     }
 
     .nav a .ico {
         font-size: 14px;
+        width: auto;
     }
 
+    /* MAIN DASHBOARD */
+
     .main {
+        width: 100%;
+        min-width: 0;
         padding: 20px 14px 25px;
     }
 
     .topbar {
-        align-items: flex-start;
+        display: flex;
         flex-direction: column;
-        margin-bottom: 17px;
+        align-items: stretch;
+        gap: 14px;
+        margin-bottom: 18px;
     }
 
     .welcome h1 {
         font-size: 21px;
     }
 
-    .search {
-        width: 100%;
+    .welcome p {
+        font-size: 12px;
     }
 
+    .search {
+        width: 100%;
+        height: 43px;
+    }
+
+    /* BANNER */
+
     .banner {
-        height: 130px;
-        padding: 20px;
+        width: 100%;
+        height: 135px;
+        padding: 17px;
+        margin-bottom: 23px;
+    }
+
+    .banner-copy {
+        max-width: 75%;
     }
 
     .banner h2 {
@@ -835,60 +879,113 @@ button {
 
     .banner p {
         font-size: 10px;
-        max-width: 250px;
+    }
+
+    .banner-tag {
+        font-size: 9px;
+        padding: 6px 9px;
     }
 
     .banner-art {
-        font-size: 68px;
-        right: 8px;
+        font-size: 62px;
+        right: 5px;
+        bottom: -5px;
     }
 
+    /* CATEGORIES */
+
     .categories {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 8px;
     }
 
     .category {
-        min-height: 78px;
+        min-height: 85px;
+        padding: 8px 3px;
     }
 
     .category .emoji {
         font-size: 23px;
     }
 
+    .category span:last-child {
+        font-size: 10px;
+        text-align: center;
+    }
+
+    /* FOOD CARDS */
+
     .products {
-        grid-template-columns: repeat(2,minmax(0,1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .product {
+        padding: 9px;
     }
 
     .product-visual {
-        height: 90px;
+        height: 105px;
+        font-size: 48px;
     }
+
+    .product h3 {
+        font-size: 12px;
+    }
+
+    .product p {
+        font-size: 10px;
+    }
+
+    .price {
+        font-size: 12px;
+    }
+
+    /* RECENT ORDERS */
 
     .recent {
         grid-template-columns: 1fr;
+        gap: 9px;
     }
 
+    .recent-card {
+        padding: 12px;
+    }
+
+    /* RIGHT PANEL */
+
     .rightbar {
-        display: grid;
-        grid-template-columns: 1fr;
-        padding: 17px 14px;
-        gap: 14px;
+        width: 100%;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        padding: 18px 14px 25px;
+        border-left: 0;
+        border-top: 1px solid #eee;
+        gap: 18px;
     }
 
     .right-top {
-        grid-column: auto;
+        width: 100%;
         justify-content: flex-end;
         margin: 0;
     }
 
     .customer-card {
-        margin: 0;
+        margin-bottom: 0;
     }
 
     .right-section {
+        width: 100%;
         margin: 0;
     }
 
+    .quick-link {
+        min-height: 48px;
+    }
+
     .support-box {
+        width: 100%;
         margin: 0;
     }
 
