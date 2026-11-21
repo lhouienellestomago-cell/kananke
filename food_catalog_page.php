@@ -84,47 +84,28 @@ if (!isset($pages[$type])) {
 }
 
 $config = $pages[$type];
+
+// Product records are stored in Railway MySQL, not Render's temporary filesystem.
+require_once __DIR__ . "/db.php";
+
+$conn->query("CREATE TABLE IF NOT EXISTS catalog_products (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    product_key VARCHAR(100) NOT NULL,
+    category VARCHAR(30) NOT NULL,
+    name VARCHAR(150) NOT NULL,
+    description VARCHAR(1000) NOT NULL,
+    price DECIMAL(12,2) NOT NULL,
+    image_data LONGBLOB NULL,
+    image_mime VARCHAR(50) NULL,
+    image_path VARCHAR(500) NULL,
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_catalog_product (category, product_key),
+    INDEX idx_catalog_category (category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
 $products = $config["products"];
-
-// Load administrator-added products.
-$jsonPath = __DIR__ . "/" . $config["json"];
-
-if (is_file($jsonPath)) {
-    $savedProducts = json_decode(
-        file_get_contents($jsonPath),
-        true
-    );
-
-    if (is_array($savedProducts)) {
-        foreach ($savedProducts as $id => $product) {
-            if (
-                !is_array($product) ||
-                !isset($product["name"], $product["price"])
-            ) {
-                continue;
-            }
-
-            $price = filter_var(
-                $product["price"],
-                FILTER_VALIDATE_FLOAT
-            );
-
-            if ($price === false || $price < 0) {
-                continue;
-            }
-
-            $products[$id] = [
-                "name" => (string)$product["name"],
-                "description" => (string)($product["description"] ?? ""),
-                "price" => (float)$price,
-                "image" => (string)($product["image"] ?? "")
-            ];
-        }
-    }
-}
-
-
-// Product management is restricted to administrators.
 $isAdmin = (($_SESSION["role"] ?? "") === "admin");
 $adminMessage = "";
 $adminMessageType = "success";
@@ -133,25 +114,54 @@ if (empty($_SESSION["catalog_csrf"])) {
     $_SESSION["catalog_csrf"] = bin2hex(random_bytes(32));
 }
 
-function catalog_load_saved(string $filename): array {
-    $path = __DIR__ . "/" . $filename;
-    if (!is_file($path)) return [];
-    $data = json_decode((string)file_get_contents($path), true);
-    return is_array($data) ? $data : [];
+// Read legacy JSON products so products created before this upgrade remain visible.
+$legacyJsonPath = __DIR__ . "/" . $config["json"];
+if (is_file($legacyJsonPath)) {
+    $legacyProducts = json_decode((string)file_get_contents($legacyJsonPath), true);
+    if (is_array($legacyProducts)) {
+        foreach ($legacyProducts as $legacyId => $legacyProduct) {
+            if ($legacyId === "_deleted" || !is_array($legacyProduct) || !isset($legacyProduct["name"], $legacyProduct["price"])) continue;
+            $legacyPrice = filter_var($legacyProduct["price"], FILTER_VALIDATE_FLOAT);
+            if ($legacyPrice === false || $legacyPrice < 0) continue;
+            $products[$legacyId] = [
+                "name" => (string)$legacyProduct["name"],
+                "description" => (string)($legacyProduct["description"] ?? ""),
+                "price" => (float)$legacyPrice,
+                "image" => (string)($legacyProduct["image"] ?? "")
+            ];
+        }
+        foreach (($legacyProducts["_deleted"] ?? []) as $legacyDeletedId => $wasDeleted) {
+            if ($wasDeleted) unset($products[$legacyDeletedId]);
+        }
+    }
 }
 
-function catalog_save_saved(string $filename, array $data): bool {
-    $path = __DIR__ . "/" . $filename;
-    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    if ($json === false) return false;
-    $tmp = $path . ".tmp";
-    if (file_put_contents($tmp, $json, LOCK_EX) === false) return false;
-    return rename($tmp, $path);
+// Load permanent product overrides and additions from Railway.
+$loadProducts = $conn->prepare("SELECT id, product_key, name, description, price, image_data, image_path, is_deleted FROM catalog_products WHERE category = ?");
+$loadProducts->bind_param("s", $config["prefix"]);
+$loadProducts->execute();
+$dbProducts = $loadProducts->get_result();
+while ($row = $dbProducts->fetch_assoc()) {
+    $productKey = (string)$row["product_key"];
+    if ((int)$row["is_deleted"] === 1) {
+        unset($products[$productKey]);
+        continue;
+    }
+    $image = !empty($row["image_data"])
+        ? "product_image.php?id=" . (int)$row["id"]
+        : (string)($row["image_path"] ?? "");
+    $products[$productKey] = [
+        "name" => (string)$row["name"],
+        "description" => (string)$row["description"],
+        "price" => (float)$row["price"],
+        "image" => $image
+    ];
 }
+$loadProducts->close();
 
-function catalog_upload_image(string $field, string $folder, ?string $existing = null): ?string {
+function catalog_upload_image_blob(string $field): ?array {
     if (!isset($_FILES[$field]) || ($_FILES[$field]["error"] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-        return $existing;
+        return null;
     }
     $file = $_FILES[$field];
     if (($file["error"] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
@@ -161,28 +171,14 @@ function catalog_upload_image(string $field, string $folder, ?string $existing =
         throw new RuntimeException("Image must be 10MB or smaller.");
     }
     $info = @getimagesize($file["tmp_name"]);
-    if (!$info || empty($info["mime"])) {
-        throw new RuntimeException("Please upload a valid image.");
+    $allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    $mime = strtolower((string)($info["mime"] ?? ""));
+    if (!$info || !in_array($mime, $allowed, true)) {
+        throw new RuntimeException("Please upload a valid JPG, PNG, WEBP, or GIF image.");
     }
-    $extensions = [
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/webp" => "webp",
-        "image/gif" => "gif"
-    ];
-    $mime = strtolower((string)$info["mime"]);
-    if (!isset($extensions[$mime])) {
-        throw new RuntimeException("Only JPG, PNG, WEBP, and GIF images are allowed.");
-    }
-    $directory = __DIR__ . "/uploads/" . $folder;
-    if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
-        throw new RuntimeException("Could not create the product image folder.");
-    }
-    $filename = "product_" . bin2hex(random_bytes(10)) . "." . $extensions[$mime];
-    if (!move_uploaded_file($file["tmp_name"], $directory . "/" . $filename)) {
-        throw new RuntimeException("Could not save the uploaded image.");
-    }
-    return "uploads/" . $folder . "/" . $filename;
+    $bytes = file_get_contents($file["tmp_name"]);
+    if ($bytes === false) throw new RuntimeException("Could not read the uploaded image.");
+    return ["data" => $bytes, "mime" => $mime];
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["catalog_action"])) {
@@ -190,113 +186,101 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["catalog_action"])) {
         http_response_code(403);
         exit("You are not allowed to manage products.");
     }
-
-    if (
-        !isset($_POST["catalog_csrf"]) ||
-        !hash_equals($_SESSION["catalog_csrf"], (string)$_POST["catalog_csrf"])
-    ) {
+    if (!isset($_POST["catalog_csrf"]) || !hash_equals($_SESSION["catalog_csrf"], (string)$_POST["catalog_csrf"])) {
         http_response_code(400);
         exit("Invalid security token. Please refresh and try again.");
     }
 
-    $savedProducts = catalog_load_saved($config["json"]);
-    $deletedIds = is_array($savedProducts["_deleted"] ?? null) ? $savedProducts["_deleted"] : [];
     $action = (string)$_POST["catalog_action"];
-
+    $id = trim((string)($_POST["product_id"] ?? ""));
     try {
         if ($action === "delete") {
-            $id = trim((string)($_POST["product_id"] ?? ""));
-            if ($id === "" || !isset($products[$id])) {
-                throw new RuntimeException("Product not found.");
-            }
-            unset($savedProducts[$id]);
-            $deletedIds[$id] = true;
-            $savedProducts["_deleted"] = $deletedIds;
-
-            if (!catalog_save_saved($config["json"], $savedProducts)) {
-                throw new RuntimeException("Could not save the product changes. Check file permissions.");
-            }
+            if ($id === "" || !isset($products[$id])) throw new RuntimeException("Product not found.");
+            $old = $products[$id];
+            $stmt = $conn->prepare("INSERT INTO catalog_products (product_key, category, name, description, price, image_path, is_deleted) VALUES (?, ?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE is_deleted = 1");
+            $stmt->bind_param("ssssds", $id, $config["prefix"], $old["name"], $old["description"], $old["price"], $old["image"]);
+            $stmt->execute();
+            $stmt->close();
             header("Location: " . basename($_SERVER["PHP_SELF"]) . "?deleted=1");
             exit;
         }
 
-        if ($action === "add" || $action === "edit") {
-            $id = trim((string)($_POST["product_id"] ?? ""));
-            $name = trim((string)($_POST["product_name"] ?? ""));
-            $description = trim((string)($_POST["product_description"] ?? ""));
-            $price = filter_var($_POST["product_price"] ?? null, FILTER_VALIDATE_FLOAT);
+        if ($action !== "add" && $action !== "edit") throw new RuntimeException("Unknown product action.");
+        $name = trim((string)($_POST["product_name"] ?? ""));
+        $description = trim((string)($_POST["product_description"] ?? ""));
+        $price = filter_var($_POST["product_price"] ?? null, FILTER_VALIDATE_FLOAT);
+        if ($name === "" || mb_strlen($name) > 150) throw new RuntimeException("Enter a product name (maximum 150 characters).");
+        if ($description === "" || mb_strlen($description) > 1000) throw new RuntimeException("Enter a description (maximum 1,000 characters).");
+        if ($price === false || $price <= 0 || $price > 10000000) throw new RuntimeException("Enter a valid product price.");
+        if ($action === "edit" && ($id === "" || !isset($products[$id]))) throw new RuntimeException("Product not found.");
 
-            if ($name === "" || mb_strlen($name) > 150) {
-                throw new RuntimeException("Enter a product name (maximum 150 characters).");
-            }
-            if ($description === "" || mb_strlen($description) > 1000) {
-                throw new RuntimeException("Enter a description (maximum 1,000 characters).");
-            }
-            if ($price === false || $price <= 0 || $price > 10000000) {
-                throw new RuntimeException("Enter a valid product price.");
-            }
-            if ($action === "edit" && ($id === "" || !isset($products[$id]))) {
-                throw new RuntimeException("Product not found.");
-            }
+        if ($action === "add") $id = $config["prefix"] . "-" . bin2hex(random_bytes(8));
+        $uploaded = catalog_upload_image_blob("product_image");
 
-            $existingImage = $action === "edit" ? (string)($products[$id]["image"] ?? "") : null;
-            $image = catalog_upload_image("product_image", $config["prefix"], $existingImage);
-            if (!$image) {
-                throw new RuntimeException("Please choose a product image.");
-            }
-
-            if ($action === "add") {
-                $id = $config["prefix"] . "-" . bin2hex(random_bytes(8));
-            }
-
-            $savedProducts[$id] = [
-                "name" => $name,
-                "description" => $description,
-                "price" => round((float)$price, 2),
-                "image" => $image
-            ];
-            unset($deletedIds[$id]);
-            if (!empty($deletedIds)) {
-                $savedProducts["_deleted"] = $deletedIds;
+        // Keep the existing image when an admin edits text/price only.
+        $imageData = null;
+        $imageMime = null;
+        $imagePath = null;
+        if ($uploaded !== null) {
+            $imageData = $uploaded["data"];
+            $imageMime = $uploaded["mime"];
+        } elseif ($action === "edit") {
+            $existing = $conn->prepare("SELECT image_data, image_mime, image_path FROM catalog_products WHERE category = ? AND product_key = ? LIMIT 1");
+            $existing->bind_param("ss", $config["prefix"], $id);
+            $existing->execute();
+            $existingRow = $existing->get_result()->fetch_assoc();
+            $existing->close();
+            if ($existingRow && !empty($existingRow["image_data"])) {
+                $imageData = $existingRow["image_data"];
+                $imageMime = $existingRow["image_mime"];
             } else {
-                unset($savedProducts["_deleted"]);
+                $imagePath = $existingRow["image_path"] ?? ($products[$id]["image"] ?? null);
+                if (is_string($imagePath) && str_starts_with($imagePath, "product_image.php?")) $imagePath = null;
             }
-
-            if (!catalog_save_saved($config["json"], $savedProducts)) {
-                throw new RuntimeException("Could not save the product changes. Check file permissions.");
-            }
-            header("Location: " . basename($_SERVER["PHP_SELF"]) . ($action === "add" ? "?added=1" : "?updated=1"));
-            exit;
         }
+        if ($action === "add" && $uploaded === null) throw new RuntimeException("Please choose a product image.");
+        if ($action === "edit" && $uploaded === null && $imageData === null && !$imagePath) throw new RuntimeException("Please choose a product image.");
 
-        throw new RuntimeException("Unknown product action.");
+        $stmt = $conn->prepare("INSERT INTO catalog_products (product_key, category, name, description, price, image_data, image_mime, image_path, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), price = VALUES(price), image_data = IF(VALUES(image_data) IS NULL, image_data, VALUES(image_data)), image_mime = IF(VALUES(image_mime) IS NULL, image_mime, VALUES(image_mime)), image_path = IF(VALUES(image_data) IS NULL, VALUES(image_path), NULL), is_deleted = 0");
+        $priceValue = round((float)$price, 2);
+        $stmt->bind_param("ssssdsss", $id, $config["prefix"], $name, $description, $priceValue, $imageData, $imageMime, $imagePath);
+        $stmt->execute();
+        $stmt->close();
+
+        header("Location: " . basename($_SERVER["PHP_SELF"]) . ($action === "add" ? "?added=1" : "?updated=1"));
+        exit;
     } catch (Throwable $e) {
+        error_log("Catalog management error: " . $e->getMessage());
         $adminMessage = $e->getMessage();
         $adminMessageType = "error";
     }
 }
 
-if (isset($_GET["added"])) $adminMessage = "Product added successfully.";
+if (isset($_GET["added"])) $adminMessage = "Product added and saved permanently.";
 if (isset($_GET["updated"])) $adminMessage = "Product updated successfully.";
 if (isset($_GET["deleted"])) $adminMessage = "Product deleted successfully.";
 
-// Reload saved data so the page always displays the latest catalog.
-$savedProducts = catalog_load_saved($config["json"]);
-$deletedIds = is_array($savedProducts["_deleted"] ?? null) ? $savedProducts["_deleted"] : [];
-foreach ($deletedIds as $deletedId => $deleted) {
-    if ($deleted) unset($products[$deletedId]);
+// Refresh products from Railway after any request.
+$products = $config["products"];
+if (isset($legacyProducts) && is_array($legacyProducts)) {
+    foreach ($legacyProducts as $legacyId => $legacyProduct) {
+        if ($legacyId === "_deleted" || !is_array($legacyProduct) || !isset($legacyProduct["name"], $legacyProduct["price"])) continue;
+        $legacyPrice = filter_var($legacyProduct["price"], FILTER_VALIDATE_FLOAT);
+        if ($legacyPrice !== false && $legacyPrice >= 0) $products[$legacyId] = ["name" => (string)$legacyProduct["name"], "description" => (string)($legacyProduct["description"] ?? ""), "price" => (float)$legacyPrice, "image" => (string)($legacyProduct["image"] ?? "")];
+    }
+    foreach (($legacyProducts["_deleted"] ?? []) as $legacyDeletedId => $wasDeleted) if ($wasDeleted) unset($products[$legacyDeletedId]);
 }
-foreach ($savedProducts as $id => $product) {
-    if ($id === "_deleted" || !is_array($product) || !isset($product["name"], $product["price"])) continue;
-    $price = filter_var($product["price"], FILTER_VALIDATE_FLOAT);
-    if ($price === false || $price <= 0) continue;
-    $products[$id] = [
-        "name" => (string)$product["name"],
-        "description" => (string)($product["description"] ?? ""),
-        "price" => (float)$price,
-        "image" => (string)($product["image"] ?? "")
-    ];
+$refresh = $conn->prepare("SELECT id, product_key, name, description, price, image_data, image_path, is_deleted FROM catalog_products WHERE category = ?");
+$refresh->bind_param("s", $config["prefix"]);
+$refresh->execute();
+$refreshResult = $refresh->get_result();
+while ($row = $refreshResult->fetch_assoc()) {
+    $key = (string)$row["product_key"];
+    if ((int)$row["is_deleted"] === 1) { unset($products[$key]); continue; }
+    $image = !empty($row["image_data"]) ? "product_image.php?id=" . (int)$row["id"] : (string)($row["image_path"] ?? "");
+    $products[$key] = ["name" => (string)$row["name"], "description" => (string)$row["description"], "price" => (float)$row["price"], "image" => $image];
 }
+$refresh->close();
 
 // Determine user information.
 $customerName = $_SESSION["name"]
