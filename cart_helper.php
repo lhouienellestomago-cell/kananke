@@ -78,8 +78,19 @@ function cart_catalog(): array {
     ];
 
     foreach ($sources as $prefix => $source) {
-        foreach (cart_read_json($source['file']) as $id => $product) {
-            if (!is_array($product) ||
+        $savedProducts = cart_read_json($source['file']);
+
+        // A tombstone in the JSON file removes a built-in product too.
+        if (isset($savedProducts['_deleted']) && is_array($savedProducts['_deleted'])) {
+            foreach ($savedProducts['_deleted'] as $deletedId => $deleted) {
+                if ($deleted) {
+                    unset($catalog[$prefix . ':' . $deletedId]);
+                }
+            }
+        }
+
+        foreach ($savedProducts as $id => $product) {
+            if ($id === '_deleted' || !is_array($product) ||
                 !isset($product['name'], $product['price'])) {
                 continue;
             }
@@ -91,6 +102,7 @@ function cart_catalog(): array {
 
             if ($price === false || $price <= 0) continue;
 
+            // Saved catalog records override the built-in product details.
             $catalog[$prefix . ':' . $id] = [
                 'name' => (string)$product['name'],
                 'price' => (float)$price,
