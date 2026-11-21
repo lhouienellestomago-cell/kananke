@@ -84,107 +84,6 @@ if (!isset($pages[$type])) {
 }
 
 $config = $pages[$type];
-$isAdmin = (($_SESSION["role"] ?? "") === "admin");
-
-if (empty($_SESSION["catalog_csrf"])) {
-    $_SESSION["catalog_csrf"] = bin2hex(random_bytes(32));
-}
-
-$adminMessage = "";
-$adminMessageType = "success";
-
-// Admin-only product creation for the current category.
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["add_catalog_product"])) {
-    if (!$isAdmin) {
-        http_response_code(403);
-        exit("You are not allowed to add products.");
-    }
-
-    $submittedToken = (string)($_POST["catalog_csrf"] ?? "");
-    if (!hash_equals($_SESSION["catalog_csrf"], $submittedToken)) {
-        $adminMessage = "Your session expired. Please refresh the page and try again.";
-        $adminMessageType = "error";
-    } else {
-        $productName = trim((string)($_POST["product_name"] ?? ""));
-        $description = trim((string)($_POST["product_description"] ?? ""));
-        $price = filter_var(trim((string)($_POST["product_price"] ?? "")), FILTER_VALIDATE_FLOAT);
-
-        if ($productName === "" || mb_strlen($productName) > 150) {
-            $adminMessage = "Enter a product name (maximum 150 characters).";
-            $adminMessageType = "error";
-        } elseif ($description === "" || mb_strlen($description) > 1000) {
-            $adminMessage = "Enter a description (maximum 1,000 characters).";
-            $adminMessageType = "error";
-        } elseif ($price === false || $price <= 0) {
-            $adminMessage = "Enter a valid price greater than ₱0.";
-            $adminMessageType = "error";
-        } elseif (!isset($_FILES["product_image"]) || $_FILES["product_image"]["error"] !== UPLOAD_ERR_OK) {
-            $adminMessage = "Please choose a product image to upload.";
-            $adminMessageType = "error";
-        } elseif ($_FILES["product_image"]["size"] > 10 * 1024 * 1024) {
-            $adminMessage = "The image is too large. Maximum size is 10MB.";
-            $adminMessageType = "error";
-        } else {
-            $tmpImage = $_FILES["product_image"]["tmp_name"];
-            $imageInfo = @getimagesize($tmpImage);
-            $mime = $imageInfo["mime"] ?? "";
-            $allowedTypes = ["image/jpeg" => "jpg", "image/png" => "png", "image/webp" => "webp", "image/gif" => "gif"];
-
-            if (!isset($allowedTypes[$mime])) {
-                $adminMessage = "Only JPG, PNG, WEBP, and GIF images are allowed.";
-                $adminMessageType = "error";
-            } else {
-                $uploadDirectory = __DIR__ . "/uploads/catalog/" . $type;
-                if (!is_dir($uploadDirectory) && !mkdir($uploadDirectory, 0755, true) && !is_dir($uploadDirectory)) {
-                    $adminMessage = "Could not create the product image folder. Check hosting permissions.";
-                    $adminMessageType = "error";
-                } else {
-                    $imageFileName = bin2hex(random_bytes(16)) . "." . $allowedTypes[$mime];
-                    $imageDestination = $uploadDirectory . "/" . $imageFileName;
-                    $relativeImagePath = "uploads/catalog/" . $type . "/" . $imageFileName;
-
-                    if (!move_uploaded_file($tmpImage, $imageDestination)) {
-                        $adminMessage = "The image could not be saved. Check folder permissions.";
-                        $adminMessageType = "error";
-                    } else {
-                        $jsonPathForSave = __DIR__ . "/" . $config["json"];
-                        $savedProducts = [];
-                        if (is_file($jsonPathForSave)) {
-                            $existingJson = json_decode((string)file_get_contents($jsonPathForSave), true);
-                            if (is_array($existingJson)) $savedProducts = $existingJson;
-                        }
-
-                        $newProductId = $type . "-" . bin2hex(random_bytes(8));
-                        $savedProducts[$newProductId] = [
-                            "name" => $productName,
-                            "description" => $description,
-                            "price" => round((float)$price, 2),
-                            "image" => $relativeImagePath
-                        ];
-                        $jsonOutput = json_encode($savedProducts, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-
-                        if ($jsonOutput === false || file_put_contents($jsonPathForSave, $jsonOutput, LOCK_EX) === false) {
-                            @unlink($imageDestination);
-                            $adminMessage = "Could not save the product list. Make sure the website folder is writable.";
-                            $adminMessageType = "error";
-                        } else {
-                            $_SESSION["catalog_flash"] = ["type" => "success", "message" => "Product added successfully!"];
-                            header("Location: " . basename($_SERVER["PHP_SELF"]));
-                            exit;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-if (isset($_SESSION["catalog_flash"]) && is_array($_SESSION["catalog_flash"])) {
-    $adminMessage = (string)($_SESSION["catalog_flash"]["message"] ?? "");
-    $adminMessageType = (string)($_SESSION["catalog_flash"]["type"] ?? "success");
-    unset($_SESSION["catalog_flash"]);
-}
-
 $products = $config["products"];
 
 // Load administrator-added products.
@@ -222,6 +121,181 @@ if (is_file($jsonPath)) {
             ];
         }
     }
+}
+
+
+// Product management is restricted to administrators.
+$isAdmin = (($_SESSION["role"] ?? "") === "admin");
+$adminMessage = "";
+$adminMessageType = "success";
+
+if (empty($_SESSION["catalog_csrf"])) {
+    $_SESSION["catalog_csrf"] = bin2hex(random_bytes(32));
+}
+
+function catalog_load_saved(string $filename): array {
+    $path = __DIR__ . "/" . $filename;
+    if (!is_file($path)) return [];
+    $data = json_decode((string)file_get_contents($path), true);
+    return is_array($data) ? $data : [];
+}
+
+function catalog_save_saved(string $filename, array $data): bool {
+    $path = __DIR__ . "/" . $filename;
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) return false;
+    $tmp = $path . ".tmp";
+    if (file_put_contents($tmp, $json, LOCK_EX) === false) return false;
+    return rename($tmp, $path);
+}
+
+function catalog_upload_image(string $field, string $folder, ?string $existing = null): ?string {
+    if (!isset($_FILES[$field]) || ($_FILES[$field]["error"] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return $existing;
+    }
+    $file = $_FILES[$field];
+    if (($file["error"] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException("Image upload failed. Please try again.");
+    }
+    if (($file["size"] ?? 0) > 10 * 1024 * 1024) {
+        throw new RuntimeException("Image must be 10MB or smaller.");
+    }
+    $info = @getimagesize($file["tmp_name"]);
+    if (!$info || empty($info["mime"])) {
+        throw new RuntimeException("Please upload a valid image.");
+    }
+    $extensions = [
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif"
+    ];
+    $mime = strtolower((string)$info["mime"]);
+    if (!isset($extensions[$mime])) {
+        throw new RuntimeException("Only JPG, PNG, WEBP, and GIF images are allowed.");
+    }
+    $directory = __DIR__ . "/uploads/" . $folder;
+    if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
+        throw new RuntimeException("Could not create the product image folder.");
+    }
+    $filename = "product_" . bin2hex(random_bytes(10)) . "." . $extensions[$mime];
+    if (!move_uploaded_file($file["tmp_name"], $directory . "/" . $filename)) {
+        throw new RuntimeException("Could not save the uploaded image.");
+    }
+    return "uploads/" . $folder . "/" . $filename;
+}
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["catalog_action"])) {
+    if (!$isAdmin) {
+        http_response_code(403);
+        exit("You are not allowed to manage products.");
+    }
+
+    if (
+        !isset($_POST["catalog_csrf"]) ||
+        !hash_equals($_SESSION["catalog_csrf"], (string)$_POST["catalog_csrf"])
+    ) {
+        http_response_code(400);
+        exit("Invalid security token. Please refresh and try again.");
+    }
+
+    $savedProducts = catalog_load_saved($config["json"]);
+    $deletedIds = is_array($savedProducts["_deleted"] ?? null) ? $savedProducts["_deleted"] : [];
+    $action = (string)$_POST["catalog_action"];
+
+    try {
+        if ($action === "delete") {
+            $id = trim((string)($_POST["product_id"] ?? ""));
+            if ($id === "" || !isset($products[$id])) {
+                throw new RuntimeException("Product not found.");
+            }
+            unset($savedProducts[$id]);
+            $deletedIds[$id] = true;
+            $savedProducts["_deleted"] = $deletedIds;
+
+            if (!catalog_save_saved($config["json"], $savedProducts)) {
+                throw new RuntimeException("Could not save the product changes. Check file permissions.");
+            }
+            header("Location: " . basename($_SERVER["PHP_SELF"]) . "?deleted=1");
+            exit;
+        }
+
+        if ($action === "add" || $action === "edit") {
+            $id = trim((string)($_POST["product_id"] ?? ""));
+            $name = trim((string)($_POST["product_name"] ?? ""));
+            $description = trim((string)($_POST["product_description"] ?? ""));
+            $price = filter_var($_POST["product_price"] ?? null, FILTER_VALIDATE_FLOAT);
+
+            if ($name === "" || mb_strlen($name) > 150) {
+                throw new RuntimeException("Enter a product name (maximum 150 characters).");
+            }
+            if ($description === "" || mb_strlen($description) > 1000) {
+                throw new RuntimeException("Enter a description (maximum 1,000 characters).");
+            }
+            if ($price === false || $price <= 0 || $price > 10000000) {
+                throw new RuntimeException("Enter a valid product price.");
+            }
+            if ($action === "edit" && ($id === "" || !isset($products[$id]))) {
+                throw new RuntimeException("Product not found.");
+            }
+
+            $existingImage = $action === "edit" ? (string)($products[$id]["image"] ?? "") : null;
+            $image = catalog_upload_image("product_image", $config["prefix"], $existingImage);
+            if (!$image) {
+                throw new RuntimeException("Please choose a product image.");
+            }
+
+            if ($action === "add") {
+                $id = $config["prefix"] . "-" . bin2hex(random_bytes(8));
+            }
+
+            $savedProducts[$id] = [
+                "name" => $name,
+                "description" => $description,
+                "price" => round((float)$price, 2),
+                "image" => $image
+            ];
+            unset($deletedIds[$id]);
+            if (!empty($deletedIds)) {
+                $savedProducts["_deleted"] = $deletedIds;
+            } else {
+                unset($savedProducts["_deleted"]);
+            }
+
+            if (!catalog_save_saved($config["json"], $savedProducts)) {
+                throw new RuntimeException("Could not save the product changes. Check file permissions.");
+            }
+            header("Location: " . basename($_SERVER["PHP_SELF"]) . ($action === "add" ? "?added=1" : "?updated=1"));
+            exit;
+        }
+
+        throw new RuntimeException("Unknown product action.");
+    } catch (Throwable $e) {
+        $adminMessage = $e->getMessage();
+        $adminMessageType = "error";
+    }
+}
+
+if (isset($_GET["added"])) $adminMessage = "Product added successfully.";
+if (isset($_GET["updated"])) $adminMessage = "Product updated successfully.";
+if (isset($_GET["deleted"])) $adminMessage = "Product deleted successfully.";
+
+// Reload saved data so the page always displays the latest catalog.
+$savedProducts = catalog_load_saved($config["json"]);
+$deletedIds = is_array($savedProducts["_deleted"] ?? null) ? $savedProducts["_deleted"] : [];
+foreach ($deletedIds as $deletedId => $deleted) {
+    if ($deleted) unset($products[$deletedId]);
+}
+foreach ($savedProducts as $id => $product) {
+    if ($id === "_deleted" || !is_array($product) || !isset($product["name"], $product["price"])) continue;
+    $price = filter_var($product["price"], FILTER_VALIDATE_FLOAT);
+    if ($price === false || $price <= 0) continue;
+    $products[$id] = [
+        "name" => (string)$product["name"],
+        "description" => (string)($product["description"] ?? ""),
+        "price" => (float)$price,
+        "image" => (string)($product["image"] ?? "")
+    ];
 }
 
 // Determine user information.
@@ -457,28 +531,6 @@ input {
     color: var(--muted);
     font-size: 11px;
 }
-
-/* ADMIN ADD PRODUCT */
-.admin-heading-actions { display:flex; align-items:center; gap:12px; }
-.admin-add-button { border:0; border-radius:9px; background:var(--orange); color:#fff; padding:10px 14px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap; }
-.admin-add-button:hover { background:#dc7418; }
-.admin-message { margin:0 0 15px; padding:12px 14px; border-radius:9px; font-size:12px; }
-.admin-message.success { background:#eaf8ed; color:#216b35; }
-.admin-message.error { background:#fff0ed; color:#a52c1d; }
-.product-modal-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.55); padding:18px; align-items:center; justify-content:center; }
-.product-modal-overlay.open { display:flex; }
-.product-modal { width:100%; max-width:470px; max-height:92vh; overflow-y:auto; background:#fff; border-radius:15px; padding:23px; box-shadow:0 15px 50px #0003; }
-.product-modal-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
-.product-modal-header h2 { margin:0; font-size:20px; }
-.product-modal-close { border:0; background:#f2f2f2; border-radius:50%; width:34px; height:34px; cursor:pointer; font-size:20px; }
-.admin-form-group { margin:13px 0; }
-.admin-form-group label { display:block; margin-bottom:7px; font-size:12px; font-weight:700; }
-.admin-form-group input, .admin-form-group textarea { width:100%; border:1px solid #ddd; border-radius:8px; padding:11px; outline:none; font:inherit; font-size:13px; }
-.admin-form-group input:focus, .admin-form-group textarea:focus { border-color:var(--orange); }
-.admin-form-group textarea { resize:vertical; min-height:85px; }
-.admin-form-note { color:var(--muted); font-size:10px; margin-top:5px; }
-.admin-save-button { width:100%; border:0; border-radius:9px; padding:13px; margin-top:10px; background:var(--gold); color:#493500; font-weight:800; cursor:pointer; }
-.admin-save-button:hover { background:#e8a900; }
 
 /* PRODUCT GRID */
 
@@ -742,9 +794,6 @@ input {
 /* MOBILE */
 
 @media (max-width: 650px) {
-    .admin-heading-actions { gap:7px; }
-    .admin-add-button { padding:9px 10px; font-size:10px; }
-    .section-heading h2 { font-size:16px; }
     .app-layout {
         display: flex;
         flex-direction: column;
@@ -899,6 +948,38 @@ input {
         height: 175px;
     }
 }
+
+/* ADMIN PRODUCT MANAGEMENT */
+.catalog-heading-actions { display:flex; align-items:center; gap:12px; }
+.catalog-add-button,.catalog-save-button { border:0; border-radius:9px; background:#f28b28; color:#fff; padding:11px 16px; font-weight:700; cursor:pointer; }
+.catalog-add-button:hover,.catalog-save-button:hover { background:#df7615; }
+.catalog-admin-actions { display:flex; gap:8px; margin-top:12px; }
+.catalog-admin-actions form { margin:0; }
+.catalog-edit-button,.catalog-delete-button { border:0; border-radius:7px; padding:8px 10px; font-size:11px; font-weight:700; cursor:pointer; }
+.catalog-edit-button { background:#fff0d9; color:#a95a00; }
+.catalog-delete-button { background:#fff0f0; color:#c0392b; }
+.catalog-message { padding:11px 14px; margin:0 0 15px; border-radius:8px; background:#eaf8ee; color:#24733a; font-size:12px; }
+.catalog-message.error { background:#fff0f0; color:#b42318; }
+.catalog-modal-overlay { display:none; position:fixed; inset:0; z-index:999; background:rgba(0,0,0,.48); padding:20px; align-items:center; justify-content:center; overflow-y:auto; }
+.catalog-modal-overlay.open { display:flex; }
+.catalog-modal { width:min(100%,480px); max-height:calc(100vh - 40px); overflow-y:auto; background:#fff; border-radius:16px; padding:22px; box-shadow:0 18px 60px rgba(0,0,0,.2); }
+.catalog-modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+.catalog-modal-head h2 { margin:0; font-size:19px; }
+.catalog-close { border:0; background:transparent; font-size:28px; color:#777; cursor:pointer; }
+.catalog-label { display:block; margin:13px 0 6px; font-size:12px; font-weight:700; color:#444; }
+.catalog-input { display:block; width:100%; border:1px solid #ddd; border-radius:8px; padding:11px; font-size:13px; outline:none; background:#fff; }
+.catalog-input:focus { border-color:#f28b28; box-shadow:0 0 0 3px rgba(242,139,40,.12); }
+.catalog-textarea { min-height:90px; resize:vertical; }
+.catalog-file { padding:8px; }
+.catalog-help { color:#888; font-size:10px; line-height:1.5; margin-top:6px; }
+.catalog-save-button { width:100%; margin-top:20px; padding:13px; }
+@media(max-width:650px) {
+ .catalog-heading-actions { gap:7px; }
+ .catalog-add-button { padding:9px 10px; font-size:10px; }
+ .catalog-admin-actions { flex-wrap:wrap; }
+ .catalog-modal { padding:17px; }
+}
+
 </style>
 </head>
 
@@ -1011,51 +1092,43 @@ input {
 
         <div class="section-heading">
             <h2>Available Products</h2>
-            <div class="admin-heading-actions">
+            <div class="catalog-heading-actions">
                 <span><?= count($products) ?> products</span>
                 <?php if ($isAdmin): ?>
-                    <button type="button" class="admin-add-button" onclick="openProductModal()">+ Add Product</button>
+                    <button type="button" class="catalog-add-button" onclick="openProductModal('add')">+ Add Product</button>
                 <?php endif; ?>
             </div>
         </div>
 
         <?php if ($adminMessage !== ""): ?>
-            <div class="admin-message <?= cart_h($adminMessageType) ?>"><?= cart_h($adminMessage) ?></div>
+            <div class="catalog-message <?= $adminMessageType === "error" ? "error" : "" ?>"><?= cart_h($adminMessage) ?></div>
         <?php endif; ?>
 
         <?php if ($isAdmin): ?>
-        <div class="product-modal-overlay" id="productModal" onclick="closeProductModalFromOverlay(event)">
-            <div class="product-modal" role="dialog" aria-modal="true" aria-labelledby="productModalTitle">
-                <div class="product-modal-header">
+        <div class="catalog-modal-overlay" id="productModal" onclick="closeProductModalOutside(event)">
+            <div class="catalog-modal" role="dialog" aria-modal="true" aria-labelledby="productModalTitle">
+                <div class="catalog-modal-head">
                     <h2 id="productModalTitle">Add New Product</h2>
-                    <button type="button" class="product-modal-close" onclick="closeProductModal()" aria-label="Close">&times;</button>
+                    <button type="button" class="catalog-close" onclick="closeProductModal()" aria-label="Close">&times;</button>
                 </div>
-                <form method="POST" enctype="multipart/form-data">
+                <form method="POST" enctype="multipart/form-data" id="productForm">
                     <input type="hidden" name="catalog_csrf" value="<?= cart_h($_SESSION["catalog_csrf"]) ?>">
-                    <input type="hidden" name="add_catalog_product" value="1">
-                    <div class="admin-form-group">
-                        <label for="product_name">Product Name</label>
-                        <input type="text" id="product_name" name="product_name" maxlength="150" required>
-                    </div>
-                    <div class="admin-form-group">
-                        <label for="product_description">Description</label>
-                        <textarea id="product_description" name="product_description" maxlength="1000" required></textarea>
-                    </div>
-                    <div class="admin-form-group">
-                        <label for="product_price">Price (₱)</label>
-                        <input type="number" id="product_price" name="product_price" min="0.01" step="0.01" required>
-                    </div>
-                    <div class="admin-form-group">
-                        <label for="product_image">Product Image</label>
-                        <input type="file" id="product_image" name="product_image" accept="image/jpeg,image/png,image/webp,image/gif" required>
-                        <div class="admin-form-note">JPG, PNG, WEBP, or GIF. Maximum size: 10MB.</div>
-                    </div>
-                    <button type="submit" class="admin-save-button">Save Product</button>
+                    <input type="hidden" name="catalog_action" id="catalogAction" value="add">
+                    <input type="hidden" name="product_id" id="catalogProductId" value="">
+                    <label class="catalog-label" for="catalogName">Product Name</label>
+                    <input class="catalog-input" type="text" name="product_name" id="catalogName" maxlength="150" required>
+                    <label class="catalog-label" for="catalogDescription">Description</label>
+                    <textarea class="catalog-input catalog-textarea" name="product_description" id="catalogDescription" maxlength="1000" required></textarea>
+                    <label class="catalog-label" for="catalogPrice">Price (₱)</label>
+                    <input class="catalog-input" type="number" name="product_price" id="catalogPrice" min="0.01" max="10000000" step="0.01" required>
+                    <label class="catalog-label" for="catalogImage">Product Image <span id="imageOptionalNote">(required for new products)</span></label>
+                    <input class="catalog-input catalog-file" type="file" name="product_image" id="catalogImage" accept="image/jpeg,image/png,image/webp,image/gif">
+                    <div class="catalog-help">JPG, PNG, WEBP, or GIF. Maximum file size: 10MB. When editing, leave empty to keep the current image.</div>
+                    <button class="catalog-save-button" type="submit">Save Product</button>
                 </form>
             </div>
         </div>
         <?php endif; ?>
-
 
         <section class="product-grid">
 
@@ -1117,6 +1190,19 @@ input {
                             </form>
 
                         </div>
+
+                        <?php if ($isAdmin): ?>
+                        <div class="catalog-admin-actions">
+                            <button type="button" class="catalog-edit-button"
+                                onclick='openProductModal("edit", <?= json_encode((string)$id) ?>, <?= json_encode((string)$product["name"], JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP) ?>, <?= json_encode((string)$product["description"], JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP) ?>, <?= json_encode((string)$product["price"]) ?>)'>Edit Product</button>
+                            <form method="POST" onsubmit="return confirm('Delete <?= cart_h(addslashes($product["name"])) ?>? This cannot be undone.');">
+                                <input type="hidden" name="catalog_csrf" value="<?= cart_h($_SESSION["catalog_csrf"]) ?>">
+                                <input type="hidden" name="catalog_action" value="delete">
+                                <input type="hidden" name="product_id" value="<?= cart_h($id) ?>">
+                                <button type="submit" class="catalog-delete-button">Delete</button>
+                            </form>
+                        </div>
+                        <?php endif; ?>
 
                     </div>
 
@@ -1243,26 +1329,28 @@ input {
     🛒 My Cart (<?= $cartCount ?>)
 </a>
 
+
 <?php if ($isAdmin): ?>
 <script>
-function openProductModal() {
-    const modal = document.getElementById("productModal");
-    if (modal) {
-        modal.classList.add("open");
-        document.body.style.overflow = "hidden";
-        const field = document.getElementById("product_name");
-        if (field) field.focus();
-    }
+function openProductModal(mode, id = "", name = "", description = "", price = "") {
+    const overlay = document.getElementById("productModal");
+    document.getElementById("catalogAction").value = mode;
+    document.getElementById("catalogProductId").value = id;
+    document.getElementById("productModalTitle").textContent = mode === "edit" ? "Edit Product" : "Add New Product";
+    document.getElementById("catalogName").value = name;
+    document.getElementById("catalogDescription").value = description;
+    document.getElementById("catalogPrice").value = price;
+    document.getElementById("catalogImage").required = mode === "add";
+    document.getElementById("imageOptionalNote").textContent = mode === "edit" ? "(optional — leave empty to keep current image)" : "(required)";
+    overlay.classList.add("open");
+    document.body.style.overflow = "hidden";
 }
 function closeProductModal() {
-    const modal = document.getElementById("productModal");
-    if (modal) {
-        modal.classList.remove("open");
-        document.body.style.overflow = "";
-    }
+    document.getElementById("productModal").classList.remove("open");
+    document.body.style.overflow = "";
 }
-function closeProductModalFromOverlay(event) {
-    if (event.target && event.target.id === "productModal") closeProductModal();
+function closeProductModalOutside(event) {
+    if (event.target.id === "productModal") closeProductModal();
 }
 document.addEventListener("keydown", function(event) {
     if (event.key === "Escape") closeProductModal();
