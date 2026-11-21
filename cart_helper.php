@@ -112,6 +112,55 @@ function cart_catalog(): array {
         }
     }
 
+    // Merge the permanent Railway catalog. This keeps added/edited/deleted
+    // products consistent when customers add items to their cart.
+    global $conn;
+    if (!isset($conn) || !($conn instanceof mysqli)) {
+        require_once __DIR__ . '/db.php';
+    }
+    if (isset($conn) && $conn instanceof mysqli) {
+        $conn->query("CREATE TABLE IF NOT EXISTS catalog_products (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            product_key VARCHAR(100) NOT NULL,
+            category VARCHAR(30) NOT NULL,
+            name VARCHAR(150) NOT NULL,
+            description VARCHAR(1000) NOT NULL,
+            price DECIMAL(12,2) NOT NULL,
+            image_data LONGBLOB NULL,
+            image_mime VARCHAR(50) NULL,
+            image_path VARCHAR(500) NULL,
+            is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_catalog_product (category, product_key),
+            INDEX idx_catalog_category (category)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+        $categoryNames = [
+            'tray' => 'Food by Tray',
+            'bundle' => 'Food Bundles',
+            'additional' => 'Additionals'
+        ];
+        $result = $conn->query("SELECT id, product_key, category, name, price, image_data, image_path, is_deleted FROM catalog_products");
+        while ($row = $result->fetch_assoc()) {
+            $key = $row['category'] . ':' . $row['product_key'];
+            if ((int)$row['is_deleted'] === 1) {
+                unset($catalog[$key]);
+                continue;
+            }
+            $image = !empty($row['image_data'])
+                ? 'product_image.php?id=' . (int)$row['id']
+                : (string)($row['image_path'] ?? '');
+            $catalog[$key] = [
+                'name' => (string)$row['name'],
+                'price' => (float)$row['price'],
+                'image' => $image,
+                'category' => $categoryNames[$row['category']] ?? 'Products'
+            ];
+        }
+        $result->free();
+    }
+
     return $catalog;
 }
 
